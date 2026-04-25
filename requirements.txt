@@ -1,0 +1,45 @@
+# ============================================================
+# BLAIR Recommender System — Requirements
+# Python 3.10+
+# Install: pip install -r requirements.txt
+# ============================================================
+
+# --- Core data stack ---
+pandas>=2.1.0
+pyarrow>=14.0.0          # parquet read/write
+numpy>=1.26.0
+scipy>=1.11.0
+
+# --- Config ---
+pyyaml>=6.0.1
+
+# --- NLP ---
+nltk>=3.8.1
+vaderSentiment>=3.3.2
+transformers>=4.38.0     # for tokenisation helpers
+sentence-transformers>=2.6.0   # stage 3 (also used in Colab)
+spacy>=3.7.0             # optional: POS tagging for aspect extraction
+# run after install: python -m spacy download en_core_web_sm
+
+# --- Retrieval ---
+rank-bm25>=0.2.2         # stage 4 BM25 baseline
+faiss-cpu>=1.7.4         # stage 4 FAISS index (use faiss-gpu in Colab)
+
+# --- Machine Learning ---
+lightgbm>=4.3.0          # stage 7 LambdaRank
+scikit-learn>=1.4.0      # preprocessing, metrics
+
+# --- Visualisation ---
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# --- Progress & utilities ---
+tqdm>=4.66.0
+joblib>=1.3.0
+
+# --- Notebook (optional, for exploratory work) ---
+jupyter>=1.0.0
+ipykernel>=6.29.0
+
+# --- Evaluation helpers ---
+# ndcg_score is in sklearn; no extra package needed

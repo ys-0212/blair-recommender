@@ -1,0 +1,302 @@
+project:
+  name: blair-recommender
+  seed: 42
+
+# ---------------------------------------------------------------------------
+# Paths  (all relative to project root; resolved via src/utils/config.py)
+# ---------------------------------------------------------------------------
+paths:
+  # Directories
+  data_raw:        data/raw
+  data_processed:  data/processed
+  data_embeddings: data/embeddings
+  outputs_charts:  outputs/charts
+  outputs_results: outputs/results
+
+  # Raw input files
+  raw_reviews: data/raw/Video_Games.jsonl.gz
+  raw_meta:    data/raw/meta_Video_Games.jsonl.gz
+  raw_train:   data/raw/Video_Games.train.csv.gz          # may not exist yet (incomplete download)
+  raw_valid:   data/raw/Video_Games.valid.csv.gz
+  raw_test:    data/raw/Video_Games.test.csv.gz
+
+  # Stage 1 outputs
+  meta_clean:    data/processed/meta_clean.parquet
+  reviews_top5:  data/processed/reviews_top5.parquet
+  train:         data/processed/train.parquet
+  valid:         data/processed/valid.parquet
+  test:          data/processed/test.parquet
+
+  # Stage 2 outputs
+  reviews_nlp:   data/processed/reviews_nlp.parquet
+
+  # Stage 3 outputs (written in Colab, loaded locally)
+  item_embeddings: data/embeddings/item_embeddings.npy
+  item_ids:        data/embeddings/item_ids.npy
+
+  # Stage 4 outputs
+  faiss_index:     data/embeddings/faiss_index.bin
+  candidates:      data/processed/candidates.parquet
+
+  # Stage 5 outputs
+  user_profiles:         data/processed/user_profiles.parquet
+  user_voice_docs:       data/processed/user_voice_docs.parquet
+  user_voice_embeddings: data/embeddings/user_voice_embeddings.npy
+  user_voice_ids:        data/embeddings/user_voice_ids.npy
+
+  # Stage 6 outputs
+  features_train:  data/processed/features_train.parquet
+  features_valid:  data/processed/features_valid.parquet
+  features_test:   data/processed/features_test.parquet
+  feature_stats:   outputs/results/feature_stats.json
+
+  # Stage 7 outputs
+  ranker_model:       outputs/results/lambdarank_model.pkl
+  feature_importance: outputs/charts/feature_importance.png
+
+  # Stage 8 outputs
+  eval_results:     outputs/results/eval_results.json
+  ablation_results: outputs/results/ablation_results.json
+
+  # Stage 10 outputs
+  qualitative_report: outputs/results/qualitative_report.html
+
+# ---------------------------------------------------------------------------
+# Stage 1 — Data Pipeline
+# ---------------------------------------------------------------------------
+stage1:
+  min_reviews_per_user: 5   # 5-core filtering (drop users with < 5 reviews)
+  min_reviews_per_item: 5   # 5-core filtering (drop items with < 5 reviews)
+
+  meta_fields:
+    - parent_asin
+    - title
+    - description
+    - features
+    - price
+    - store
+    - categories
+    - average_rating
+    - rating_number
+
+  review_fields:
+    - user_id
+    - parent_asin
+    - rating
+    - text
+    - timestamp
+    - helpful_vote
+    - verified_purchase
+
+# ---------------------------------------------------------------------------
+# Stage 2 — NLP Enrichment
+# ---------------------------------------------------------------------------
+stage2:
+  # TF-IDF settings (used in aggregator for collective vocabulary)
+  tfidf_ngram_min: 1
+  tfidf_ngram_max: 2
+  tfidf_max_features: 50000
+  tfidf_min_df: 2
+  # Temporal window percentages (fraction of a product's review count)
+  temporal_window_pct: 0.10       # size of early / recent windows
+  temporal_mid_start_pct: 0.45    # start of mid window
+  temporal_mid_end_pct: 0.55      # end of mid window
+  temporal_min_reviews: 10        # products with fewer use all reviews for all windows
+
+  aspects:
+    - gameplay
+    - graphics
+    - story
+    - controls
+    - value
+
+  aspect_keywords:
+    gameplay:
+      - gameplay
+      - mechanics
+      - playability
+      - fun
+      - boring
+      - engaging
+      - addictive
+      - replay
+    graphics:
+      - graphics
+      - visuals
+      - visual
+      - resolution
+      - fps
+      - framerate
+      - beautiful
+      - stunning
+      - art
+    story:
+      - story
+      - plot
+      - narrative
+      - character
+      - characters
+      - ending
+      - writing
+      - dialogue
+      - lore
+    controls:
+      - controls
+      - controller
+      - input
+      - responsive
+      - lag
+      - button
+      - keyboard
+      - mouse
+    value:
+      - price
+      - worth
+      - money
+      - expensive
+      - cheap
+      - value
+      - cost
+      - budget
+      - overpriced
+
+# ---------------------------------------------------------------------------
+# Stage 3 — BLAIR Embeddings  (runs in Colab)
+# ---------------------------------------------------------------------------
+stage3:
+  model_name: hyp1231/blair-roberta-large   # full BLAIR model (GPU, Colab)
+  batch_size: 32                             # safe for T4 + RoBERTa-large
+  max_seq_length: 512
+  embedding_dim: 1024
+  checkpoint_every: 5000                    # save partial results every N items
+  embed_all_items: true                     # embed all 137k products
+
+# ---------------------------------------------------------------------------
+# Stage 4 — FAISS Retrieval
+# ---------------------------------------------------------------------------
+stage4:
+  top_k_candidates: 100
+  faiss_nlist: 128        # IVF index: number of Voronoi cells
+  faiss_nprobe: 16        # cells to probe at query time
+  index_type: IVFFlat
+  metric: INNER_PRODUCT   # L2-normalised embeddings → cosine similarity
+
+# ---------------------------------------------------------------------------
+# Stage 5 — User Modeling
+# ---------------------------------------------------------------------------
+stage5:
+  recency_lambda: 0.001   # exponential decay applied to timestamp differences (ms)
+  query_weight: 0.7        # weight of query embedding in hybrid blend
+  user_weight: 0.3         # weight of user profile embedding in hybrid blend
+
+# ---------------------------------------------------------------------------
+# Stage 6 — Feature Engineering  (17 features total)
+# ---------------------------------------------------------------------------
+stage6:
+  feature_groups:
+    retrieval:      # 4 features
+      - faiss_score
+      - bm25_score
+      - cosine_sim
+      - rank_in_candidates
+    product:        # 5 features
+      - item_avg_rating
+      - item_rating_count
+      - price_norm
+      - description_len_norm
+      - feature_count
+    personalization:  # 8 features
+      - user_avg_rating
+      - user_review_count
+      - sentiment_score
+      - aspect_gameplay
+      - aspect_graphics
+      - aspect_story
+      - aspect_controls
+      - aspect_value
+
+# ---------------------------------------------------------------------------
+# Stage 7 — LambdaRank (LightGBM)
+# ---------------------------------------------------------------------------
+stage7:
+  # f27_is_forced_positive is EXCLUDED from training (not a real signal)
+  feature_cols:
+    - f01_faiss_score
+    - f02_faiss_rank
+    - f03_query_item_cosine
+    - f04_user_uniform_cosine
+    - f05_avg_rating
+    - f06_rating_count_log
+    - f07_review_count_log
+    - f08_mean_sentiment
+    - f09_price_normalized
+    - f10_hidden_gem_score
+    - f11_controversy_index
+    - f12_desc_richness
+    - f13_aspect_gameplay
+    - f14_aspect_graphics
+    - f15_aspect_story
+    - f16_aspect_controls
+    - f17_aspect_value
+    - f18_user_item_voice_cosine
+    - f19_category_match
+    - f20_price_tier_match
+    - f21_user_avg_sentiment_gap
+    - f22_top_aspect_match
+    - f23_interaction_count_log
+    - f24_sentiment_trajectory
+    - f25_verified_ratio
+    - f26_helpfulness_weighted_sentiment
+  exclude_cols:
+    - f27_is_forced_positive
+  objective: lambdarank
+  metric: ndcg
+  ndcg_eval_at: [1, 5, 10]
+  n_estimators: 500
+  learning_rate: 0.05
+  max_depth: 6
+  num_leaves: 31
+  min_child_samples: 20
+  subsample: 0.8
+  colsample_bytree: 0.8
+  early_stopping_rounds: 30
+  n_jobs: -1
+  model_path: outputs/results/lambdarank_model.lgb
+  importance_chart: outputs/charts/feature_importance.png
+  training_history: outputs/results/training_history.json
+
+# ---------------------------------------------------------------------------
+# Stage 8 — Evaluation
+# ---------------------------------------------------------------------------
+stage8:
+  k_values: [1, 5, 10]
+  systems:
+    - id: bm25
+      name: BM25 Baseline
+    - id: faiss
+      name: FAISS Semantic
+    - id: blair
+      name: BLAIR Full (Ours)
+
+# ---------------------------------------------------------------------------
+# Stage 9 — Ablation Study
+# ---------------------------------------------------------------------------
+stage9:
+  ablation_configs:
+    - id: no_sentiment
+      name: "w/o Sentiment"
+      drop_features: [sentiment_score, aspect_gameplay, aspect_graphics, aspect_story, aspect_controls, aspect_value]
+    - id: no_personalization
+      name: "w/o Personalization"
+      drop_features: [user_avg_rating, user_review_count, recency_score]
+    - id: no_embeddings
+      name: "w/o Semantic Embeddings"
+      drop_features: [faiss_score, cosine_sim, bm25_score]
+
+# ---------------------------------------------------------------------------
+# Stage 10 — Qualitative Analysis
+# ---------------------------------------------------------------------------
+stage10:
+  num_users: 5
+  top_k_display: 10
+  history_display: 5

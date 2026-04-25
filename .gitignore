@@ -1,0 +1,23 @@
+# Large data files
+data/
+*.parquet
+*.npy
+*.bin
+*.lgb
+
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code memory
+.claude/
+
+# Outputs (charts/results can be committed selectively)
+outputs/
+
+# Downloads
+*.crdownload
