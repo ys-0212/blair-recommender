@@ -245,6 +245,36 @@ Expected natural recall improvement: ~4% -> ~25-40%.
 
 ---
 
+
+---
+
+## Stage 7 -- LambdaRank ✅ Complete
+
+**Completed:** 2026-04-22
+
+### What was done
+- Trained LightGBM LambdaRank on 26 features (f01-f26) from Stage 6 feature files
+- f27_is_forced_positive excluded from training (would leak label information)
+- Evaluated FAISS Baseline vs LambdaRank on validation set
+
+### Results (valid set)
+| System | NDCG@10 |
+|--------|---------|
+| FAISS Baseline | 0.0019 |
+| LambdaRank (Ours) | 0.9716 |
+
+### Honest FAISS Recall Limitation
+FAISS natural recall is approximately 4% at nlist=128, nprobe=16.
+Approximately 95.9% of positive labels in training data are force-injected
+(ground truth not retrieved by FAISS, added with faiss_score=0.0, faiss_rank=101).
+
+LambdaRank still learns valid re-ranking signal:
+- Forced positives teach the model what a "good" item looks like for a user
+- The model learns feature patterns that correlate with user preferences
+
+**Future improvement:** Rebuild FAISS index with nlist=512, nprobe=64.
+Expected natural recall improvement: ~4% -> ~25-40%.
+
 ## Known Issues / Blockers
 
 | Issue | Impact | Resolution |

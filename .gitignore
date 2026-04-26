@@ -17,7 +17,9 @@ __pycache__/
 .claude/
 
 # Outputs (charts/results can be committed selectively)
-outputs/
-
+outputs/results/
 # Downloads
 *.crdownload
+
+CLAUDE.md
+.claude/

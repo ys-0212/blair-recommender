@@ -22,7 +22,7 @@ _FEATURE_DISPLAY_NAMES: dict[str, str] = {
     "f01_faiss_score":                     "FAISS Score",
     "f02_faiss_rank":                      "FAISS Rank",
     "f03_query_item_cosine":               "Query-Item Cosine",
-    "f04_user_uniform_cosine":             "User-Item Cosine",
+    "f04_user_uniform_cosine":             "User-Item Cosine (Uniform)",
     "f05_avg_rating":                      "Avg Rating",
     "f06_rating_count_log":                "Rating Count (log)",
     "f07_review_count_log":                "Review Count (log)",
@@ -45,6 +45,10 @@ _FEATURE_DISPLAY_NAMES: dict[str, str] = {
     "f24_sentiment_trajectory":            "Sentiment Trajectory",
     "f25_verified_ratio":                  "Verified Purchase Ratio",
     "f26_helpfulness_weighted_sentiment":  "Helpfulness-Weighted Sentiment",
+    "f28_user_recency_cosine":             "User-Item Cosine (Recency)",
+    "f29_user_rating_cosine":              "User-Item Cosine (Rating)",
+    "f30_user_combined_cosine":            "User-Item Cosine (Combined)",
+    "f31_bm25_score":                      "BM25 Score",
 }
 
 _GROUP_COLORS: dict[str, str] = {
@@ -57,11 +61,13 @@ _GROUP_COLORS: dict[str, str] = {
 
 def _feature_group(fname: str) -> str:
     n = int(fname[1:3])
-    if n <= 4:   return "retrieval"
-    if n <= 12:  return "product"
-    if n <= 17:  return "aspect"
-    if n <= 23:  return "personalization"
-    return "temporal_quality"
+    if n <= 4:              return "retrieval"
+    if n <= 12:             return "product"
+    if n <= 17:             return "aspect"
+    if n <= 23:             return "personalization"
+    if n <= 26:             return "temporal_quality"
+    if fname == "f31_bm25_score": return "retrieval"
+    return "personalization"   # f28-f30 are user embedding cosines
 
 
 def load_split_chunked(
@@ -184,21 +190,27 @@ def train_lambdarank(
 
     ndcg_at = cfg7.get("ndcg_eval_at", [1, 5, 10])
     params  = {
-        "objective":          cfg7.get("objective",          "lambdarank"),
-        "metric":             cfg7.get("metric",             "ndcg"),
-        "ndcg_eval_at":       ndcg_at,
-        "learning_rate":      float(cfg7.get("learning_rate",    0.05)),
-        "max_depth":          int(cfg7.get("max_depth",          6)),
-        "num_leaves":         int(cfg7.get("num_leaves",         31)),
-        "min_child_samples":  int(cfg7.get("min_child_samples",  20)),
-        "subsample":          float(cfg7.get("subsample",         0.8)),
-        "colsample_bytree":   float(cfg7.get("colsample_bytree",  0.8)),
-        "n_jobs":             int(cfg7.get("n_jobs",             -1)),
-        "importance_type":    "gain",
-        "verbose":            -1,
+        "objective":                    cfg7.get("objective",          "lambdarank"),
+        "metric":                       cfg7.get("metric",             "ndcg"),
+        "ndcg_eval_at":                 ndcg_at,
+        "learning_rate":                float(cfg7.get("learning_rate",    0.05)),
+        "max_depth":                    int(cfg7.get("max_depth",          7)),
+        "num_leaves":                   int(cfg7.get("num_leaves",         63)),
+        "min_child_samples":            int(cfg7.get("min_child_samples",  10)),
+        "subsample":                    float(cfg7.get("subsample",         0.8)),
+        "colsample_bytree":             float(cfg7.get("colsample_bytree",  0.8)),
+        "lambdarank_truncation_level":  int(cfg7.get("lambdarank_truncation_level", 20)),
+        "n_jobs":                       int(cfg7.get("n_jobs",             -1)),
+        "importance_type":              "gain",
+        "verbose":                      -1,
     }
-    n_estimators        = int(cfg7.get("n_estimators",        500))
-    early_stopping_rds  = int(cfg7.get("early_stopping_rounds", 30))
+    # Graded relevance: labels 0-5 → gains 0, 1, 3, 7, 15, 31
+    if cfg.get("stage6", {}).get("graded_relevance", False):
+        params["label_gain"] = [0, 1, 3, 7, 15, 31]
+        logger.info("Graded relevance enabled: label_gain=%s", params["label_gain"])
+
+    n_estimators        = int(cfg7.get("n_estimators",        1000))
+    early_stopping_rds  = int(cfg7.get("early_stopping_rounds", 50))
 
     logger.info("Training LambdaRank: n_estimators=%d  lr=%.3f  leaves=%d",
                 n_estimators, params["learning_rate"], params["num_leaves"])
@@ -301,10 +313,10 @@ def plot_feature_importance(
 
     # Legend
     legend_patches = [
-        mpatches.Patch(color=_GROUP_COLORS["retrieval"],        label="Retrieval (f01-f04)"),
+        mpatches.Patch(color=_GROUP_COLORS["retrieval"],        label="Retrieval (f01-f04, f31)"),
         mpatches.Patch(color=_GROUP_COLORS["product"],          label="Product (f05-f12)"),
         mpatches.Patch(color=_GROUP_COLORS["aspect"],           label="Aspect (f13-f17)"),
-        mpatches.Patch(color=_GROUP_COLORS["personalization"],  label="Personalization (f18-f23)"),
+        mpatches.Patch(color=_GROUP_COLORS["personalization"],  label="Personalization (f18-f23, f28-f30)"),
         mpatches.Patch(color=_GROUP_COLORS["temporal_quality"], label="Temporal/Quality (f24-f26)"),
     ]
     ax.legend(handles=legend_patches, loc="lower right", fontsize=9)

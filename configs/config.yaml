@@ -120,6 +120,33 @@ stage2:
       - engaging
       - addictive
       - replay
+      - combat
+      - fighting
+      - shooting
+      - driving
+      - racing
+      - puzzle
+      - strategy
+      - exploration
+      - missions
+      - quests
+      - levels
+      - difficulty
+      - challenge
+      - skill
+      - learning curve
+      - grind
+      - progression
+      - satisfying
+      - rewarding
+      - repetitive
+      - shallow
+      - deep
+      - immersive
+      - entertaining
+      - enjoyable
+      - frustrating
+      - polished
     graphics:
       - graphics
       - visuals
@@ -130,6 +157,29 @@ stage2:
       - beautiful
       - stunning
       - art
+      - animation
+      - animations
+      - textures
+      - rendering
+      - aesthetic
+      - appearance
+      - style
+      - cartoon
+      - realistic
+      - detailed
+      - blurry
+      - sharp
+      - crisp
+      - lighting
+      - shadows
+      - effects
+      - cutscenes
+      - cinematic
+      - outdated
+      - modern
+      - impressive
+      - gorgeous
+      - smooth
     story:
       - story
       - plot
@@ -140,6 +190,27 @@ stage2:
       - writing
       - dialogue
       - lore
+      - protagonist
+      - villain
+      - heroes
+      - campaign
+      - cutscene
+      - storyline
+      - script
+      - voice acting
+      - acting
+      - immersion
+      - setting
+      - universe
+      - predictable
+      - twist
+      - emotional
+      - compelling
+      - forgettable
+      - interesting
+      - cliche
+      - original
+      - creative
     controls:
       - controls
       - controller
@@ -149,6 +220,31 @@ stage2:
       - button
       - keyboard
       - mouse
+      - sensitivity
+      - aiming
+      - movement
+      - mobility
+      - handling
+      - physics
+      - clunky
+      - tight
+      - loose
+      - floaty
+      - precise
+      - accurate
+      - sluggish
+      - mapping
+      - rebind
+      - customizable
+      - joystick
+      - trigger
+      - analog
+      - touchscreen
+      - interface
+      - menu
+      - navigation
+      - camera
+      - targeting
     value:
       - price
       - worth
@@ -159,6 +255,30 @@ stage2:
       - cost
       - budget
       - overpriced
+      - dlc
+      - microtransactions
+      - season pass
+      - content
+      - hours
+      - playtime
+      - replayability
+      - sale
+      - discount
+      - full price
+      - steal
+      - rip-off
+      - justified
+      - complete
+      - incomplete
+      - short
+      - long
+      - worthwhile
+      - purchase
+      - buy
+      - recommend
+      - regret
+      - satisfied
+      - disappointed
 
 # ---------------------------------------------------------------------------
 # Stage 3 — BLAIR Embeddings  (runs in Colab)
@@ -175,45 +295,37 @@ stage3:
 # Stage 4 — FAISS Retrieval
 # ---------------------------------------------------------------------------
 stage4:
-  top_k_candidates: 100
-  faiss_nlist: 128        # IVF index: number of Voronoi cells
-  faiss_nprobe: 16        # cells to probe at query time
-  index_type: IVFFlat
-  metric: INNER_PRODUCT   # L2-normalised embeddings → cosine similarity
+  top_k_candidates: 200
+  index_type: HNSW             # HNSW gives much better recall than IVFFlat
+  metric: INNER_PRODUCT        # L2-normalised embeddings → cosine similarity
+  # HNSW parameters
+  hnsw_m: 32                   # connections per node (higher = better recall, more memory)
+  hnsw_ef_construction: 200    # build quality (higher = better index, slower build)
+  hnsw_ef_search: 128          # query recall (higher = better recall, slower search)
+  # IVFFlat fallback parameters (used if index_type: IVFFlat)
+  faiss_nlist: 512
+  faiss_nprobe: 64
 
 # ---------------------------------------------------------------------------
 # Stage 5 — User Modeling
 # ---------------------------------------------------------------------------
 stage5:
-  recency_lambda: 0.001   # exponential decay applied to timestamp differences (ms)
-  query_weight: 0.7        # weight of query embedding in hybrid blend
-  user_weight: 0.3         # weight of user profile embedding in hybrid blend
+  recency_lambda: 0.001         # exponential decay applied to timestamp differences (ms)
+  query_weight: 0.7             # weight of query embedding in hybrid blend (tier 1/2)
+  user_weight: 0.3              # weight of user profile embedding in hybrid blend (tier 1/2)
+  # Tier-3 warm user three-way blend weights
+  tier3_query_weight: 0.5
+  tier3_combined_weight: 0.3
+  tier3_voice_weight: 0.2
+  # Tier-3 fallback when no voice embedding available
+  tier3_query_weight_no_voice: 0.6
+  tier3_combined_weight_no_voice: 0.4
 
 # ---------------------------------------------------------------------------
-# Stage 6 — Feature Engineering  (17 features total)
+# Stage 6 — Feature Engineering  (31 features + f27 forced-positive flag)
 # ---------------------------------------------------------------------------
 stage6:
-  feature_groups:
-    retrieval:      # 4 features
-      - faiss_score
-      - bm25_score
-      - cosine_sim
-      - rank_in_candidates
-    product:        # 5 features
-      - item_avg_rating
-      - item_rating_count
-      - price_norm
-      - description_len_norm
-      - feature_count
-    personalization:  # 8 features
-      - user_avg_rating
-      - user_review_count
-      - sentiment_score
-      - aspect_gameplay
-      - aspect_graphics
-      - aspect_story
-      - aspect_controls
-      - aspect_value
+  graded_relevance: true   # use rating (1-5) as relevance label for ground truth
 
 # ---------------------------------------------------------------------------
 # Stage 7 — LambdaRank (LightGBM)
@@ -247,19 +359,24 @@ stage7:
     - f24_sentiment_trajectory
     - f25_verified_ratio
     - f26_helpfulness_weighted_sentiment
+    - f28_user_recency_cosine
+    - f29_user_rating_cosine
+    - f30_user_combined_cosine
+    - f31_bm25_score
   exclude_cols:
     - f27_is_forced_positive
   objective: lambdarank
   metric: ndcg
   ndcg_eval_at: [1, 5, 10]
-  n_estimators: 500
+  n_estimators: 1000
   learning_rate: 0.05
-  max_depth: 6
-  num_leaves: 31
-  min_child_samples: 20
+  max_depth: 7
+  num_leaves: 63
+  min_child_samples: 10
   subsample: 0.8
   colsample_bytree: 0.8
-  early_stopping_rounds: 30
+  early_stopping_rounds: 50
+  lambdarank_truncation_level: 20
   n_jobs: -1
   model_path: outputs/results/lambdarank_model.lgb
   importance_chart: outputs/charts/feature_importance.png
@@ -270,33 +387,33 @@ stage7:
 # ---------------------------------------------------------------------------
 stage8:
   k_values: [1, 5, 10]
+  bootstrap_iterations: 1000
+  bootstrap_sample_size: 10000
   systems:
-    - id: bm25
+    - id: random_baseline
+      name: Random Baseline
+      score_col: random_score
+    - id: bm25_baseline
       name: BM25 Baseline
-    - id: faiss
+      score_col: f31_bm25_score
+    - id: faiss_baseline
       name: FAISS Semantic
-    - id: blair
-      name: BLAIR Full (Ours)
+      score_col: f01_faiss_score
+    - id: lambdarank
+      name: LambdaRank (Ours)
+      score_col: lambdarank_score
 
 # ---------------------------------------------------------------------------
 # Stage 9 — Ablation Study
 # ---------------------------------------------------------------------------
 stage9:
-  ablation_configs:
-    - id: no_sentiment
-      name: "w/o Sentiment"
-      drop_features: [sentiment_score, aspect_gameplay, aspect_graphics, aspect_story, aspect_controls, aspect_value]
-    - id: no_personalization
-      name: "w/o Personalization"
-      drop_features: [user_avg_rating, user_review_count, recency_score]
-    - id: no_embeddings
-      name: "w/o Semantic Embeddings"
-      drop_features: [faiss_score, cosine_sim, bm25_score]
+  # Ablation configs are defined in src/stage9_ablation/main.py (ABLATION_CONFIGS)
+  k_values: [1, 5, 10]
 
 # ---------------------------------------------------------------------------
 # Stage 10 — Qualitative Analysis
 # ---------------------------------------------------------------------------
 stage10:
   num_users: 5
-  top_k_display: 10
+  top_k_display: 5
   history_display: 5

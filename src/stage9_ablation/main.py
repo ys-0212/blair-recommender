@@ -81,14 +81,25 @@ ABLATION_CONFIGS: list[dict[str, Any]] = [
         "name": "w/o User Voice Cosine",
         "zero": ["f18_user_item_voice_cosine"],
     },
+    {
+        "id":   "no_bm25",
+        "name": "w/o BM25 Score",
+        "zero": ["f31_bm25_score"],
+    },
+    {
+        "id":   "no_user_embeddings",
+        "name": "w/o All User Embedding Cosines",
+        "zero": ["f04_user_uniform_cosine", "f28_user_recency_cosine",
+                 "f29_user_rating_cosine", "f30_user_combined_cosine"],
+    },
 ]
 
 
 def _ndcg_at_k(sorted_labels: np.ndarray, k: int) -> float:
-    rels = sorted_labels[:k].astype(float)
-    dcg  = float(np.sum(rels / np.log2(np.arange(2, len(rels) + 2))))
+    rels  = sorted_labels[:k].astype(float)
+    dcg   = float(np.sum((2.0 ** rels - 1.0) / np.log2(np.arange(2, len(rels) + 2))))
     ideal = np.sort(sorted_labels.astype(float))[::-1][:k]
-    idcg  = float(np.sum(ideal / np.log2(np.arange(2, len(ideal) + 2))))
+    idcg  = float(np.sum((2.0 ** ideal - 1.0) / np.log2(np.arange(2, len(ideal) + 2))))
     return dcg / idcg if idcg > 0 else 0.0
 
 

@@ -1,4 +1,4 @@
-"""Stage 6 — feature engineering for LambdaRank training data (~63M rows)."""
+"""Stage 6 — feature engineering for LambdaRank training data."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from src.stage6_features.candidate_generator import generate_candidates_batch
 from src.stage6_features.feature_builder import (
     FEATURE_COLS,
     OUTPUT_COLS,
+    UserArrays,
     build_features_raw,
     compute_norm_stats,
     normalize_features,
@@ -34,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE  = 1000   # split rows per processing batch
-FLUSH_EVERY = 10     # batches per parquet write (~1M feature rows for top_k=100)
+FLUSH_EVERY = 10     # batches per parquet write
 
 
 def _load_item_lookup(cfg: dict) -> tuple[dict[str, np.ndarray], int]:
@@ -65,9 +66,117 @@ def _load_voice_dict(cfg: dict) -> dict[str, np.ndarray]:
     return voice_dict
 
 
+_EMBEDDING_COLS = ("uniform_embedding", "recency_embedding", "rating_embedding", "combined_embedding")
+
+
 def _build_profiles_dict(profiles_df: pd.DataFrame) -> dict[str, dict[str, Any]]:
-    """Convert user_profiles DataFrame to O(1)-lookup dict."""
-    return profiles_df.set_index("user_id").to_dict(orient="index")
+    """Convert user_profiles DataFrame to O(1)-lookup dict (used by blender for candidate generation)."""
+    result = profiles_df.set_index("user_id").to_dict(orient="index")
+    for prof in result.values():
+        for col in _EMBEDDING_COLS:
+            v = prof.get(col)
+            if v is not None and not isinstance(v, np.ndarray):
+                try:
+                    prof[col] = np.asarray(v, dtype=np.float32)
+                except (TypeError, ValueError):
+                    prof[col] = None
+    return result
+
+
+def _build_user_arrays(
+    profiles_df: pd.DataFrame,
+    voice_dict: dict[str, np.ndarray],
+    dim: int,
+) -> UserArrays:
+    """Pre-build numpy matrices for all user profile fields.
+
+    Converts the profiles DataFrame into contiguous numpy arrays indexed by an
+    integer user index, enabling O(1) batch gather operations in build_features_raw
+    instead of per-row Python dict lookups.
+    """
+    t0 = time.time()
+    uid_list   = profiles_df["user_id"].astype(str).tolist()
+    uid_to_idx = {uid: i for i, uid in enumerate(uid_list)}
+    n          = len(uid_list)
+
+    def _to_matrix(col: str) -> np.ndarray:
+        mat = np.zeros((n, dim), dtype=np.float32)
+        if col not in profiles_df.columns:
+            return mat
+        for i, val in enumerate(profiles_df[col]):
+            if val is None:
+                continue
+            try:
+                arr = np.asarray(val, dtype=np.float32)
+                if arr.shape == (dim,):
+                    mat[i] = arr
+            except (TypeError, ValueError):
+                pass
+        return mat
+
+    def _to_float_arr(col: str) -> np.ndarray:
+        if col not in profiles_df.columns:
+            return np.full(n, np.nan, dtype=np.float32)
+        return pd.to_numeric(profiles_df[col], errors="coerce").values.astype(np.float32)
+
+    def _to_str_arr(col: str) -> np.ndarray:
+        if col not in profiles_df.columns:
+            return np.full(n, "", dtype=object)
+        return profiles_df[col].fillna("").astype(str).values
+
+    # Interaction count log
+    if "interaction_count" in profiles_df.columns:
+        ic_log = np.log1p(
+            profiles_df["interaction_count"].fillna(0).clip(lower=0).values
+        ).astype(np.float32)
+    else:
+        ic_log = np.zeros(n, dtype=np.float32)
+
+    # Top categories as pre-built sets for O(1) lookup
+    top_cat_sets: list[set] = []
+    if "top_categories" in profiles_df.columns:
+        for v in profiles_df["top_categories"]:
+            top_cat_sets.append(set(v) if isinstance(v, list) else set())
+    else:
+        top_cat_sets = [set() for _ in range(n)]
+
+    # Voice matrix: align voice_dict (keyed by str user_id) into user_arrays order
+    voice_matrix = np.zeros((n, dim), dtype=np.float32)
+    for uid, idx in uid_to_idx.items():
+        v = voice_dict.get(uid)
+        if v is not None:
+            try:
+                arr = np.asarray(v, dtype=np.float32)
+                if arr.shape == (dim,):
+                    voice_matrix[idx] = arr
+            except (TypeError, ValueError):
+                pass
+
+    user_arrays = UserArrays(
+        user_id_to_idx        = uid_to_idx,
+        uniform_matrix        = _to_matrix("uniform_embedding"),
+        recency_matrix        = _to_matrix("recency_embedding"),
+        rating_matrix         = _to_matrix("rating_embedding"),
+        combined_matrix       = _to_matrix("combined_embedding"),
+        voice_matrix          = voice_matrix,
+        interaction_count_log = ic_log,
+        avg_sentiment         = _to_float_arr("user_avg_sentiment"),
+        top_aspect            = _to_str_arr("user_top_aspect"),
+        preferred_price_tier  = _to_str_arr("preferred_price_tier"),
+        top_cat_sets          = top_cat_sets,
+        user_aspect_gameplay  = _to_float_arr("user_aspect_gameplay"),
+        user_aspect_graphics  = _to_float_arr("user_aspect_graphics"),
+        user_aspect_story     = _to_float_arr("user_aspect_story"),
+        user_aspect_controls  = _to_float_arr("user_aspect_controls"),
+        user_aspect_value     = _to_float_arr("user_aspect_value"),
+    )
+    logger.info(
+        "Built UserArrays: %d users, dim=%d, matrices=%s in %.1f s",
+        n, dim,
+        f"{user_arrays.uniform_matrix.nbytes * 4 / 1e6:.0f} MB total",
+        time.time() - t0,
+    )
+    return user_arrays
 
 
 def _load_products_df(cfg: dict) -> pd.DataFrame:
@@ -80,6 +189,7 @@ def _load_products_df(cfg: dict) -> pd.DataFrame:
     return df
 
 
+
 def _process_split(
     split_name: str,
     split_df: pd.DataFrame,
@@ -89,6 +199,7 @@ def _process_split(
     retriever: Retriever,
     profiles_dict: dict[str, Any],
     voice_dict: dict[str, np.ndarray],
+    user_arrays: UserArrays,
     products_df: pd.DataFrame,
     cfg: dict,
     norm_stats: dict[str, dict[str, float]],
@@ -127,10 +238,7 @@ def _process_split(
         )
 
         if candidates_df.empty:
-            logger.warning(
-                "Batch %d/%d produced no candidates — skipping.",
-                batch_idx + 1, n_batches,
-            )
+            logger.warning("Batch %d/%d produced no candidates — skipping.", batch_idx + 1, n_batches)
             continue
 
         n_forced += int(candidates_df["is_forced_positive"].sum())
@@ -140,7 +248,7 @@ def _process_split(
             query_embs    = query_embs,
             item_lookup   = item_lookup,
             dim           = dim,
-            profiles_dict = profiles_dict,
+            user_arrays   = user_arrays,
             voice_dict    = voice_dict,
             products_df   = products_df,
             cfg           = cfg,
@@ -148,7 +256,6 @@ def _process_split(
         )
         norm_df = normalize_features(raw_df, norm_stats)
 
-        # Accumulate NaN counts on raw values (before fill)
         for f in FEATURE_COLS:
             if f in raw_df.columns:
                 nan_counts[f] += int(raw_df[f].isna().sum())
@@ -158,7 +265,6 @@ def _process_split(
 
         del candidates_df, query_embs, raw_df
 
-        # flush to parquet
         is_last = (batch_idx == n_batches - 1)
         if len(flush_buf) >= FLUSH_EVERY or is_last:
             chunk = pd.concat(flush_buf, ignore_index=True)
@@ -167,13 +273,9 @@ def _process_split(
             if writer is None:
                 table     = pa.Table.from_pandas(chunk, preserve_index=False)
                 pa_schema = table.schema
-                writer    = pq.ParquetWriter(
-                    str(output_path), pa_schema, compression="snappy"
-                )
+                writer    = pq.ParquetWriter(str(output_path), pa_schema, compression="snappy")
             else:
-                table = pa.Table.from_pandas(
-                    chunk, schema=pa_schema, preserve_index=False
-                )
+                table = pa.Table.from_pandas(chunk, schema=pa_schema, preserve_index=False)
             writer.write_table(table)
 
             flush_buf = []
@@ -190,35 +292,32 @@ def _process_split(
     if writer is not None:
         writer.close()
 
-    elapsed = time.time() - t_start
-    pos_pct = 100 * n_positives / max(total_written, 1)
+    elapsed    = time.time() - t_start
+    pos_pct    = 100 * n_positives / max(total_written, 1)
     forced_pct = 100 * n_forced / max(n_positives, 1)
     logger.info(
         "%s DONE: %d rows | %d positives (%.3f%%) | %d forced (%.1f%% of pos) | %.0fs",
-        split_name, total_written, n_positives, pos_pct,
-        n_forced, forced_pct, elapsed,
+        split_name, total_written, n_positives, pos_pct, n_forced, forced_pct, elapsed,
     )
 
     return {
-        "split":          split_name,
-        "rows":           total_written,
-        "positives":      n_positives,
-        "negatives":      total_written - n_positives,
-        "positive_rate":  pos_pct,
-        "n_forced":       n_forced,
-        "forced_pct":     forced_pct,
-        "elapsed_s":      round(elapsed, 1),
-        "nan_counts":     nan_counts,
+        "split":         split_name,
+        "rows":          total_written,
+        "positives":     n_positives,
+        "negatives":     total_written - n_positives,
+        "positive_rate": pos_pct,
+        "n_forced":      n_forced,
+        "forced_pct":    forced_pct,
+        "elapsed_s":     round(elapsed, 1),
+        "nan_counts":    nan_counts,
     }
 
 
 def _update_progress() -> None:
-    """Mark Stage 6 as complete in PROGRESS.md using the canonical PROJECT_ROOT."""
     prog_path = PROJECT_ROOT / "PROGRESS.md"
     if not prog_path.exists():
         logger.warning("PROGRESS.md not found at %s — skipping update", prog_path)
         return
-
     text = prog_path.read_text(encoding="utf-8")
     updated = text
     for old_status in [
@@ -232,18 +331,11 @@ def _update_progress() -> None:
     if updated != text:
         prog_path.write_text(updated, encoding="utf-8")
         logger.info("Updated PROGRESS.md - Stage 6 marked complete")
-    else:
-        logger.info("PROGRESS.md Stage 6 line not matched - update manually")
 
 
-def _print_summary(
-    summaries: list[dict],
-    norm_stats: dict[str, dict[str, float]],
-) -> None:
-    print()
+def _print_summary(summaries: list[dict], norm_stats: dict[str, dict[str, float]]) -> None:
     print()
     print("stage6 complete:")
-
     print("\nOutput sizes:")
     for s in summaries:
         print(
@@ -273,13 +365,14 @@ def _print_summary(
         if not any_nan:
             print("  (none)")
 
+
 def run() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
 
     proc    = get_path(cfg, "data_processed")
     results = get_path(cfg, "outputs_results")
-    top_k   = int(cfg.get("stage4", {}).get("top_k_candidates", 100))
+    top_k   = int(cfg.get("stage4", {}).get("top_k_candidates", 200))
 
     t0 = time.time()
 
@@ -293,6 +386,9 @@ def run() -> None:
     voice_dict  = _load_voice_dict(cfg)
     products_df = _load_products_df(cfg)
 
+    logger.info("Building UserArrays (pre-indexed numpy matrices) ...")
+    user_arrays = _build_user_arrays(user_profiles_df, voice_dict, dim)
+
     train_df = pd.read_parquet(get_path(cfg, "train"))
     valid_df = pd.read_parquet(get_path(cfg, "valid"))
     test_df  = pd.read_parquet(get_path(cfg, "test"))
@@ -300,7 +396,7 @@ def run() -> None:
         "Split sizes -- train: %d  valid: %d  test: %d",
         len(train_df), len(valid_df), len(test_df),
     )
-    logger.info("data loading complete in %.1f s", time.time() - t0)
+    logger.info("Data loading complete in %.1f s", time.time() - t0)
 
     norm_stats = compute_norm_stats(
         products_df      = products_df,
@@ -309,10 +405,7 @@ def run() -> None:
     )
 
     stats_path = results / "feature_stats.json"
-    stats_path.write_text(
-        json.dumps(norm_stats, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    stats_path.write_text(json.dumps(norm_stats, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Saved feature_stats.json: %s", stats_path)
 
     shared = dict(
@@ -321,6 +414,7 @@ def run() -> None:
         retriever     = retriever,
         profiles_dict = profiles_dict,
         voice_dict    = voice_dict,
+        user_arrays   = user_arrays,
         products_df   = products_df,
         cfg           = cfg,
         norm_stats    = norm_stats,

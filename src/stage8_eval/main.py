@@ -1,4 +1,4 @@
-"""Stage 8 — compares Random Baseline, FAISS Baseline, and LambdaRank on the test set."""
+"""Stage 8 — compares Random Baseline, BM25 Baseline, FAISS Baseline, and LambdaRank on the test set."""
 
 from __future__ import annotations
 
@@ -33,8 +33,14 @@ def _evaluate_df(
     score_col: str,
     k_values: list[int],
     system_name: str,
+    bootstrap_iterations: int = 0,
+    bootstrap_sample_size: int = 10000,
+    seed: int = 42,
 ) -> dict[str, Any]:
-    """Macro-averaged NDCG@k/HR@k/MRR/Recall@10 over queries with at least one positive."""
+    """Macro-averaged NDCG@k/HR@k/MRR/Recall@10 over queries with at least one positive.
+
+    If bootstrap_iterations > 0, also computes bootstrap std for NDCG@10.
+    """
     t0 = time.time()
     query_metrics: list[dict[str, float]] = []
     total = skipped = 0
@@ -73,6 +79,19 @@ def _evaluate_df(
             result[f"hr@{k}"]   = 0.0
         result["mrr"] = result["recall@10"] = 0.0
 
+    # Bootstrap confidence interval for NDCG@10
+    if bootstrap_iterations > 0 and evaluated > 0:
+        ndcg10_vals = np.array([m["ndcg@10"] for m in query_metrics])
+        rng = np.random.default_rng(seed)
+        n_sample = min(bootstrap_sample_size, evaluated)
+        bs_means = []
+        for _ in range(bootstrap_iterations):
+            sample = rng.choice(ndcg10_vals, size=n_sample, replace=True)
+            bs_means.append(float(np.mean(sample)))
+        result["ndcg@10_std"] = float(np.std(bs_means))
+    else:
+        result["ndcg@10_std"] = 0.0
+
     result.update({
         "total_queries":     total,
         "evaluated_queries": evaluated,
@@ -81,9 +100,10 @@ def _evaluate_df(
     })
 
     logger.info(
-        "%s: %d/%d evaluated | NDCG@10=%.4f  MRR=%.4f  HR@10=%.4f  (%.0fs)",
+        "%s: %d/%d evaluated | NDCG@10=%.4f (+/-%.4f)  MRR=%.4f  HR@10=%.4f  (%.0fs)",
         system_name, evaluated, total,
-        result.get("ndcg@10", 0.0), result["mrr"], result.get("hr@10", 0.0), elapsed,
+        result.get("ndcg@10", 0.0), result.get("ndcg@10_std", 0.0),
+        result["mrr"], result.get("hr@10", 0.0), elapsed,
     )
     return result
 
@@ -104,6 +124,7 @@ def _print_results_table(results: dict[str, dict], k_values: list[int]) -> None:
 
     system_order = [
         ("random_baseline", " Random Baseline"),
+        ("bm25_baseline",   " BM25 Baseline"),
         ("faiss_baseline",  " FAISS Baseline"),
         ("lambdarank",      " LambdaRank (Ours)"),
     ]
@@ -115,6 +136,10 @@ def _print_results_table(results: dict[str, dict], k_values: list[int]) -> None:
     for key, label in system_order:
         if key in results:
             vals = [f"{results[key].get(mk, 0.0):.4f}" for mk in metric_keys]
+            # Append CI for NDCG@10
+            if key in results and results[key].get("ndcg@10_std", 0.0) > 0:
+                ci = f" +/-{results[key]['ndcg@10_std']:.4f}"
+                vals[0] = vals[0] + ci[:col_w - len(vals[0])]
             print(_row(label, vals))
     print(_sep("╚", "╩", "╝"))
     print()
@@ -130,13 +155,14 @@ def _plot_comparison(
 
     system_info = [
         ("random_baseline", "Random Baseline",   "#9E9E9E"),
-        ("faiss_baseline",  "FAISS Baseline",    "#2196F3"),
+        ("bm25_baseline",   "BM25 Baseline",     "#FF9800"),
+        ("faiss_baseline",  "FAISS Semantic",    "#2196F3"),
         ("lambdarank",      "LambdaRank (Ours)", "#F44336"),
     ]
 
     x     = np.arange(len(metric_labels))
-    width = 0.25
-    fig, ax = plt.subplots(figsize=(10, 6))
+    width = 0.20
+    fig, ax = plt.subplots(figsize=(11, 6))
 
     for i, (key, label, color) in enumerate(system_info):
         if key not in results:
@@ -155,16 +181,11 @@ def _plot_comparison(
     ax.set_xlabel("Metric", fontsize=11)
     ax.set_ylabel("Score", fontsize=11)
     ax.set_title("System Comparison — Test Set (NDCG@k)", fontsize=13, fontweight="bold")
-    ax.set_xticks(x + width)
+    ax.set_xticks(x + width * 1.5)
     ax.set_xticklabels(metric_labels, fontsize=10)
     ax.legend(fontsize=10)
     ax.set_ylim(0, 1.15)
     ax.grid(axis="y", alpha=0.3, linestyle="--")
-    ax.text(
-        0.5, -0.13,
-        "Note: metrics inflated — FAISS recall ~4%, ~95.9% of positive labels are forced.",
-        ha="center", transform=ax.transAxes, fontsize=8, color="gray", style="italic",
-    )
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,8 +215,12 @@ def run() -> None:
     ensure_dirs(cfg)
 
     cfg7         = cfg.get("stage7", {})
+    cfg8         = cfg.get("stage8", {})
     feature_cols = list(cfg7.get("feature_cols", []))
-    k_values     = [1, 5, 10]
+    k_values     = list(cfg8.get("k_values", [1, 5, 10]))
+    bs_iters     = int(cfg8.get("bootstrap_iterations", 1000))
+    bs_size      = int(cfg8.get("bootstrap_sample_size", 10000))
+    seed         = int(cfg.get("project", {}).get("seed", 42))
     proc         = get_path(cfg, "data_processed")
     results_dir  = get_path(cfg, "outputs_results")
     charts_dir   = get_path(cfg, "outputs_charts")
@@ -215,26 +240,32 @@ def run() -> None:
     df = pd.read_parquet(test_path)
     logger.info("Loaded features_test: %d rows x %d cols in %.0fs", len(df), df.shape[1], time.time() - t0)
 
-    # Build shared query key — reused by all 3 evaluations
     df["_qkey"] = df["user_id"].astype(str) + "_" + df["query_parent_asin"].astype(str)
 
-    # System 1: Random baseline (reproducible)
-    seed = int(cfg.get("project", {}).get("seed", 42))
+    # Random baseline (reproducible)
     np.random.seed(seed)
     df["random_score"] = np.random.rand(len(df)).astype(np.float32)
 
-    # System 3: LambdaRank scores
+    # LambdaRank scores
     logger.info("Computing LambdaRank scores on %d rows ...", len(df))
     X = df[feature_cols].values.astype(np.float32)
     df["lambdarank_score"] = model.predict(X).astype(np.float32)
     del X
 
-    # System 2: FAISS Baseline already has f01_faiss_score in df
+    eval_kwargs = dict(
+        k_values             = k_values,
+        bootstrap_iterations = bs_iters,
+        bootstrap_sample_size= bs_size,
+        seed                 = seed,
+    )
 
     all_results: dict[str, dict] = {}
-    all_results["random_baseline"] = _evaluate_df(df, "random_score",    k_values, "Random Baseline")
-    all_results["faiss_baseline"]  = _evaluate_df(df, "f01_faiss_score", k_values, "FAISS Baseline")
-    all_results["lambdarank"]      = _evaluate_df(df, "lambdarank_score", k_values, "LambdaRank (Ours)")
+    all_results["random_baseline"] = _evaluate_df(df, "random_score",      system_name="Random Baseline",  **eval_kwargs)
+    # BM25 baseline (f31_bm25_score — may be zeros if BM25 not computed in stage6)
+    if "f31_bm25_score" in df.columns:
+        all_results["bm25_baseline"] = _evaluate_df(df, "f31_bm25_score",  system_name="BM25 Baseline",    **eval_kwargs)
+    all_results["faiss_baseline"]  = _evaluate_df(df, "f01_faiss_score",   system_name="FAISS Baseline",   **eval_kwargs)
+    all_results["lambdarank"]      = _evaluate_df(df, "lambdarank_score",  system_name="LambdaRank (Ours)",**eval_kwargs)
 
     print("stage8 test set results:")
     _print_results_table(all_results, k_values)
@@ -245,12 +276,10 @@ def run() -> None:
     print(f"Queries: {eval_q:,} / {total_q:,} evaluated ({skipped:,} skipped — no positive in candidate set)")
     print()
 
-    # Save JSON
     out_path = results_dir / "test_results.json"
     out_path.write_text(json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Saved test_results.json: %s", out_path)
 
-    # Plot
     chart_path = charts_dir / "system_comparison.png"
     _plot_comparison(all_results, k_values, chart_path)
 

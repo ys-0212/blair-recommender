@@ -311,8 +311,57 @@ def _build_review_signals(reviews_nlp: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return base_agg
 
 
+def validate_recency_lambda(
+    profiles_df: pd.DataFrame,
+    item_emb_lookup: dict[str, np.ndarray],
+    cfg: dict,
+) -> None:
+    """Test 3 lambda values and report which creates most differentiation from uniform embedding.
+
+    Only diagnostic — does not modify profiles or config.
+    """
+    from src.utils.config import get_path
+    lambdas = [0.0001, 0.001, 0.01]
+    proc = get_path(cfg, "data_processed")
+    try:
+        train = pd.read_parquet(proc / "train.parquet")
+    except Exception as e:
+        logger.warning("Could not load train.parquet for recency validation: %s", e)
+        return
+
+    dataset_max_ts = float(train["timestamp"].max())
+    dim = next(iter(item_emb_lookup.values())).shape[0]
+
+    logger.info("Recency lambda validation:")
+    for lam in lambdas:
+        diffs = []
+        for uid, grp in train.sort_values("timestamp").groupby("user_id", sort=False):
+            asins   = grp["parent_asin"].tolist()
+            ts_arr  = grp["timestamp"].to_numpy(dtype=np.float64)
+            rat_arr = np.ones(len(asins), dtype=np.float32)
+
+            unif_emb = _weighted_mean_embedding(asins, rat_arr, item_emb_lookup, dim)
+            delta    = (dataset_max_ts - ts_arr) / 86_400_000
+            rec_w    = np.exp(-lam * delta).astype(np.float32)
+            rec_emb  = _weighted_mean_embedding(asins, rec_w, item_emb_lookup, dim)
+
+            if unif_emb is not None and rec_emb is not None:
+                cos_sim = float(np.dot(unif_emb, rec_emb))
+                diffs.append(1.0 - cos_sim)  # higher = more differentiation
+
+            if len(diffs) >= 5000:  # sample for speed
+                break
+
+        mean_diff = float(np.mean(diffs)) if diffs else 0.0
+        logger.info("  lambda=%.4f  mean(1-cosine_to_uniform)=%.4f", lam, mean_diff)
+
+
 def _assign_cold_start_tiers(profiles: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """Assign cold_start_tier 0-3 and query/user weights from interaction count percentiles."""
+    """Assign cold_start_tier 0-3 and query/user weights from interaction count percentiles.
+
+    Note: in the training set (5-core, >=5 interactions per user), all users will
+    be tier 3 (warm). Cold-start tiers are meaningful at inference time for new users.
+    """
     cfg5 = cfg.get("stage5", {})
     std_query_w = float(cfg5.get("query_weight", 0.7))
 

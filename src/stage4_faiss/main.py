@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils.config import ensure_dirs, get_path, load_config
-from src.stage4_faiss.index_builder import build_index, load_index
+from src.stage4_faiss.index_builder import build_index, load_index, measure_self_recall
 from src.stage4_faiss.retriever import Retriever
 
 logging.basicConfig(
@@ -36,22 +36,27 @@ def run() -> None:
 
     emb_dir  = get_path(cfg, "data_embeddings")
     idx_path = emb_dir / "faiss_index.bin"
+    cfg4     = cfg["stage4"]
+    top_k    = int(cfg4.get("top_k_candidates", 200))
+    seed     = int(cfg.get("project", {}).get("seed", 42))
 
     if idx_path.exists():
-        logger.info("FAISS index already exists, loading")
+        logger.info("FAISS index already exists — loading (delete to rebuild)")
         index, id_map = load_index(cfg)
+        # Still run recall test on existing index
+        emb_path   = emb_dir / "item_embeddings.npy"
+        embeddings = np.load(emb_path).astype(np.float32)
+        measure_self_recall(index, embeddings, id_map, top_k=top_k, seed=seed)
     else:
         index, id_map = build_index(cfg)
+        emb_path   = emb_dir / "item_embeddings.npy"
+        embeddings = np.load(emb_path).astype(np.float32)
 
     logger.info("smoke test: 5 random queries, top-10 each")
-
-    emb_path = emb_dir / "item_embeddings.npy"
-    embeddings = np.load(emb_path).astype(np.float32)
-
     retriever = Retriever(cfg)
     title_map = _load_title_map(cfg)
 
-    rng = np.random.default_rng(cfg["project"]["seed"])
+    rng = np.random.default_rng(seed)
     sample_positions = rng.choice(len(id_map), size=5, replace=False)
 
     for pos in sample_positions:
@@ -75,12 +80,16 @@ def run() -> None:
             marker = " <-- SELF" if asin == query_asin else ""
             print(f"    rank {r['rank']:2d}  score={score:.4f}  {asin}  {title}{marker}")
 
+    index_type = cfg4.get("index_type", "HNSW").upper()
     logger.info("stage4 done:")
+    logger.info("  index type    : %s", index_type)
     logger.info("  index ntotal  : %d", index.ntotal)
-    logger.info("  Index nlist   : %d", index.nlist)
-    logger.info("  nprobe        : %d", cfg["stage4"]["faiss_nprobe"])
-    logger.info("  top_k default : %d", cfg["stage4"]["top_k_candidates"])
+    logger.info("  top_k default : %d", top_k)
     logger.info("  Index file    : %s", idx_path)
+    if index_type == "HNSW":
+        logger.info("  efSearch      : %d", cfg4.get("hnsw_ef_search", 128))
+    else:
+        logger.info("  nprobe        : %d", cfg4.get("faiss_nprobe", 64))
 
 
 if __name__ == "__main__":

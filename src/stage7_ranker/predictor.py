@@ -47,14 +47,16 @@ def compute_ndcg_at_k(
     k: int,
     label_col: str = "relevance_label",
 ) -> float:
-    """NDCG@k for an already-ranked candidate list (sorted descending by score)."""
+    """NDCG@k for an already-ranked candidate list (sorted descending by score).
+
+    Uses graded DCG formula: (2^rel - 1) / log2(rank+1).
+    Equivalent to binary formula when rels are 0/1.
+    """
     rels = ranked_df[label_col].values[:k].astype(float)
+    dcg  = float(np.sum((2.0 ** rels - 1.0) / np.log2(np.arange(2, len(rels) + 2))))
 
-    dcg = float(np.sum(rels / np.log2(np.arange(2, len(rels) + 2))))
-
-    # Ideal: sort positives first
     ideal_rels = np.sort(ranked_df[label_col].values.astype(float))[::-1][:k]
-    idcg = float(np.sum(ideal_rels / np.log2(np.arange(2, len(ideal_rels) + 2))))
+    idcg = float(np.sum((2.0 ** ideal_rels - 1.0) / np.log2(np.arange(2, len(ideal_rels) + 2))))
 
     return dcg / idcg if idcg > 0.0 else 0.0
 

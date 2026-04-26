@@ -102,6 +102,13 @@ def _load_features_for_users(
     return pd.concat(chunks, ignore_index=True)
 
 
+def _top_features(row: pd.Series, feature_cols: list[str], n: int = 3) -> list[str]:
+    """Return names of the top-n highest-value features for a single candidate row."""
+    vals = [(f, float(row.get(f, 0.0) or 0.0)) for f in feature_cols]
+    vals.sort(key=lambda x: x[1], reverse=True)
+    return [f for f, _ in vals[:n]]
+
+
 def _build_user_report(
     user_id: str,
     user_feat_df: pd.DataFrame,
@@ -110,6 +117,7 @@ def _build_user_report(
     nlp_lookup: dict[str, dict],
     model: lgb.Booster,
     feature_cols: list[str],
+    profiles_dict: dict[str, Any],
     top_k: int = 5,
 ) -> dict[str, Any]:
     """Build the recommendation report for one user."""
@@ -134,31 +142,58 @@ def _build_user_report(
 
     gt_title = meta_lookup.get(gt_asin, gt_asin)
 
+    # User profile summary
+    profile = profiles_dict.get(str(user_id), {})
+    user_top_aspect   = str(profile.get("user_top_aspect", "—") or "—")
+    interaction_count = int(profile.get("interaction_count", 0) or 0)
+    top_categories    = profile.get("top_categories", [])
+    if not isinstance(top_categories, list):
+        top_categories = []
+
+    # Aspect scores (may be absent)
+    aspect_scores: dict[str, float] = {}
+    for asp in ("gameplay", "graphics", "story", "controls", "value"):
+        v = profile.get(f"user_aspect_{asp}")
+        try:
+            aspect_scores[asp] = round(float(v), 3)
+        except (TypeError, ValueError):
+            pass
+
     # Compute LambdaRank scores
     X      = user_rows[feature_cols].values.astype(np.float32)
     scores = model.predict(X).astype(np.float32)
     user_rows = user_rows.copy()
     user_rows["lambdarank_score"] = scores
 
-    def _top_k_recs(score_col: str, k: int) -> list[dict]:
+    # Build a per-ASIN FAISS score map for the comparison view
+    faiss_score_map = dict(zip(
+        user_rows["candidate_parent_asin"].astype(str),
+        user_rows["f01_faiss_score"].astype(float),
+    ))
+
+    def _top_k_recs(score_col: str, k: int, add_why: bool = False) -> list[dict]:
         ranked = user_rows.sort_values(score_col, ascending=False).head(k)
         recs = []
         for rank, (_, row) in enumerate(ranked.iterrows(), 1):
             asin  = str(row["candidate_parent_asin"])
             nlp   = nlp_lookup.get(asin, {})
-            recs.append({
-                "rank":       rank,
-                "asin":       asin,
-                "title":      meta_lookup.get(asin, asin)[:80],
-                "score":      round(float(row[score_col]), 4),
-                "sentiment":  round(float(nlp.get("mean_sentiment", 0.0)), 3),
-                "top_aspect": str(nlp.get("top_aspect", "—")),
-                "is_gt":      asin == gt_asin,
-            })
+            rec: dict[str, Any] = {
+                "rank":           rank,
+                "asin":           asin,
+                "title":          meta_lookup.get(asin, asin)[:80],
+                "score":          round(float(row[score_col]), 4),
+                "faiss_score":    round(faiss_score_map.get(asin, 0.0), 4),
+                "sentiment":      round(float(nlp.get("mean_sentiment", 0.0)), 3),
+                "top_aspect":     str(nlp.get("top_aspect", "—")),
+                "is_gt":          asin == gt_asin,
+            }
+            if add_why:
+                rec["why_top_features"] = _top_features(row, feature_cols)
+            recs.append(rec)
         return recs
 
     faiss_recs = _top_k_recs("f01_faiss_score", top_k)
-    lr_recs    = _top_k_recs("lambdarank_score", top_k)
+    lr_recs    = _top_k_recs("lambdarank_score", top_k, add_why=True)
 
     # Check if GT appears in top-10
     faiss_top10_asins = set(user_rows.sort_values("f01_faiss_score", ascending=False).head(10)["candidate_parent_asin"].astype(str))
@@ -167,6 +202,10 @@ def _build_user_report(
     return {
         "user_id":             user_id,
         "n_candidates":        len(user_rows),
+        "interaction_count":   interaction_count,
+        "user_top_aspect":     user_top_aspect,
+        "aspect_scores":       aspect_scores,
+        "top_categories":      top_categories[:3],
         "history":             history_items,
         "ground_truth_asin":   gt_asin,
         "ground_truth_title":  gt_title[:80],
@@ -197,6 +236,18 @@ def _format_txt_report(reports: list[dict], user_labels: list[str]) -> str:
             lines += [f"  ERROR: {rep['error']}", ""]
             continue
 
+        # User profile summary
+        asp_str = rep.get("user_top_aspect", "—")
+        asp_scores = rep.get("aspect_scores", {})
+        asp_detail = "  ".join(f"{a}={v:.2f}" for a, v in asp_scores.items()) if asp_scores else "—"
+        cats_str = ", ".join(rep.get("top_categories", [])) or "—"
+        lines += [
+            f"PROFILE: interactions={rep.get('interaction_count', 0)}  top_categories={cats_str}",
+            f"CARES MOST ABOUT: {asp_str}",
+            f"  Aspect scores: {asp_detail}",
+            "",
+        ]
+
         lines.append("HISTORY (last 5 items):")
         for item in rep["history"]:
             lines.append(f"  {item['asin']:15s}  {item['title']}")
@@ -217,13 +268,14 @@ def _format_txt_report(reports: list[dict], user_labels: list[str]) -> str:
         lines += [
             f"  GT in FAISS top-10: {'YES' if rep['gt_in_faiss_top10'] else 'NO'}",
             "",
-            "LAMBDARANK TOP-5:",
+            "LAMBDARANK TOP-5  (score | faiss_score | why):",
         ]
         for r in rep["lambdarank_top5"]:
             gt_flag = " <-- GROUND TRUTH" if r["is_gt"] else ""
+            why = ", ".join(r.get("why_top_features", []))
             lines.append(
-                f"  {r['rank']}. [{r['score']:.4f}] {r['title']}  "
-                f"(sentiment={r['sentiment']:.2f}, top={r['top_aspect']}){gt_flag}"
+                f"  {r['rank']}. LR={r['score']:.4f} | FAISS={r['faiss_score']:.4f} | "
+                f"{r['title']}  (top={r['top_aspect']}, why: {why}){gt_flag}"
             )
         lines += [
             f"  GT in LambdaRank top-10: {'YES' if rep['gt_in_lr_top10'] else 'NO'}",
@@ -299,7 +351,12 @@ def run() -> None:
             "top_aspect":     str(row.get("top_aspect", "—") or "—"),
         }
 
-    logger.info("Loaded meta (%d items) and NLP lookup (%d items)", len(meta_lookup), len(nlp_lookup))
+    profiles_dict: dict[str, Any] = profiles_df.set_index(
+        profiles_df["user_id"].astype(str)
+    ).to_dict(orient="index")
+
+    logger.info("Loaded meta (%d items), NLP lookup (%d items), profiles (%d users)",
+                len(meta_lookup), len(nlp_lookup), len(profiles_dict))
 
     # Select 5 diverse users
     selected_users = _select_diverse_users(valid_split_df, profiles_df, seed=seed)
@@ -328,6 +385,7 @@ def run() -> None:
             nlp_lookup   = nlp_lookup,
             model        = model,
             feature_cols = feature_cols,
+            profiles_dict= profiles_dict,
             top_k        = top_k,
         )
         rep["label"] = label

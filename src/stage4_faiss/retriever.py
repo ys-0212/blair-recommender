@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import faiss
@@ -23,14 +22,29 @@ class Retriever:
             cfg = load_config()
         self._cfg   = cfg
         self._cfg4  = cfg["stage4"]
-        self._nprobe   = int(self._cfg4.get("faiss_nprobe", 16))
-        self._top_k    = int(self._cfg4.get("top_k_candidates", 100))
+        self._top_k = int(self._cfg4.get("top_k_candidates", 200))
         self._index, self._id_map = load_index(cfg)
-        self._index.nprobe = self._nprobe
-        logger.info(
-            "Retriever ready: ntotal=%d  nprobe=%d  default_top_k=%d",
-            self._index.ntotal, self._nprobe, self._top_k,
-        )
+
+        # Set search parameters depending on index type
+        if hasattr(self._index, "hnsw"):
+            ef_search = int(self._cfg4.get("hnsw_ef_search", 128))
+            self._index.hnsw.efSearch = ef_search
+            logger.info(
+                "Retriever ready (HNSW): ntotal=%d  efSearch=%d  default_top_k=%d",
+                self._index.ntotal, ef_search, self._top_k,
+            )
+        elif hasattr(self._index, "nprobe"):
+            nprobe = int(self._cfg4.get("faiss_nprobe", 64))
+            self._index.nprobe = nprobe
+            logger.info(
+                "Retriever ready (IVFFlat): ntotal=%d  nprobe=%d  default_top_k=%d",
+                self._index.ntotal, nprobe, self._top_k,
+            )
+        else:
+            logger.info(
+                "Retriever ready: ntotal=%d  default_top_k=%d",
+                self._index.ntotal, self._top_k,
+            )
 
     def retrieve(
         self,
@@ -95,7 +109,6 @@ class Retriever:
             pos = self._id_map.index(parent_asin)
         except ValueError:
             return None
-        # Reconstruct from index (only works for non-compressed index types)
         vec = np.zeros((1, self._index.d), dtype=np.float32)
         self._index.reconstruct(pos, vec[0])
         return vec[0]
