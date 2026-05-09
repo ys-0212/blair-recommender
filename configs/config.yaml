@@ -3,12 +3,12 @@ project:
   seed: 42
 
 # ---------------------------------------------------------------------------
-# Pipeline Version  (v2 = pretrained BLAIR, v3 = custom domain BLAIR)
+# Pipeline Version  (v1 = pretrained BLAIR, v2 = custom domain BLAIR)
 # ---------------------------------------------------------------------------
 pipeline:
-  active_version: "v3"
-  v2_embedding_dir: "data/embeddings/using_inference"
-  v3_embedding_dir: "data/embeddings/using_scratch_model"
+  active_version: "v2"
+  v1_embedding_dir: "data/embeddings/using_inference"
+  v2_embedding_dir: "data/embeddings/using_scratch_model"
 
 # ---------------------------------------------------------------------------
 # Embedding filenames  (resolved against active version dir by get_embedding_path)

@@ -268,36 +268,36 @@ Expected natural recall improvement: ~4% -> ~25-40%.
 
 | Version | Model | NDCG@10 | HR@10 | MRR | Status |
 |---------|-------|---------|-------|-----|--------|
-| V2 | hyp1231/blair-roberta-large | 0.9740 | 0.9783 | 0.9733 | Complete |
-| V3 | blair-videogames-multiaspect | pending | pending | pending | Running |
+| V1 | hyp1231/blair-roberta-large | 0.9740 | 0.9783 | 0.9733 | Complete |
+| V2 | blair-videogames-multiaspect | 0.9270 | 0.9426 | 0.9242 | Complete |
 
 ## Embedding Structure
 
 ```
 data/embeddings/
-├── using_inference/        V2 pretrained BLAIR
+├── using_inference/        V1 pretrained BLAIR
 │   ├── item_embeddings.npy
 │   ├── item_ids.npy
 │   ├── user_voice_embeddings.npy
 │   ├── user_voice_ids.npy
 │   ├── faiss_index.bin
 │   └── faiss_id_map.json
-└── using_scratch_model/    V3 custom BLAIR (ACTIVE)
+└── using_scratch_model/    V2 custom BLAIR (ACTIVE)
     ├── item_embeddings.npy
     ├── item_ids.npy
     ├── user_voice_embeddings.npy
     └── user_voice_ids.npy
 ```
 
-## V3 Stage Status
+## V2 Stage Status
 
 | Stage | Status | Notes |
 |-------|--------|-------|
 | 3 | Complete | Custom BLAIR, Kaggle P100 |
-| 4 | Pending | HNSW rebuild needed |
+| 4 | Complete | HNSW index built |
 | 5 | Complete | Voice embeddings, Kaggle P100 |
-| 6 | Pending | 125M rows expected |
-| 7 | Pending | n_estimators=2000 |
-| 8 | Pending | V2 vs V3 comparison |
-| 9 | Pending | 10 ablation configs |
-| 10 | Pending | V2 vs V3 side by side |
+| 6 | Complete | 125M rows |
+| 7 | Complete | n_estimators=2000, 135 rounds |
+| 8 | Complete | V1 vs V2 comparison |
+| 9 | Complete | 10 ablation configs |
+| 10 | Complete | V1 vs V2 side by side |

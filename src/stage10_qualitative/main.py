@@ -408,43 +408,43 @@ def run() -> None:
     print()
     print(txt_report)
 
-    v2_qual = PROJECT_ROOT / "blair-v2-backup" / "qualitative_report.json"
-    if v2_qual.exists():
-        v2_data = json.loads(v2_qual.read_text(encoding="utf-8"))
-        v2_by_id = {u["user_id"]: u for u in v2_data}
+    v1_qual = PROJECT_ROOT / "blair-v1-backup" / "qualitative_report.json"
+    if v1_qual.exists():
+        v1_data = json.loads(v1_qual.read_text(encoding="utf-8"))
+        v1_by_id = {u["user_id"]: u for u in v1_data}
 
         print()
         print("=" * 70)
-        print("V2 vs V3 QUALITATIVE COMPARISON")
+        print("V1 vs V2 QUALITATIVE COMPARISON")
         print("=" * 70)
         for user in reports:
             uid = user["user_id"]
-            v2u = v2_by_id.get(uid)
-            if not v2u:
+            v1u = v1_by_id.get(uid)
+            if not v1u:
                 continue
-            v3_rank = user.get("gt_lambdarank_rank", "N/A")
-            v2_rank = v2u.get("gt_lambdarank_rank", "N/A")
+            v2_rank = user.get("gt_lambdarank_rank", "N/A")
+            v1_rank = v1u.get("gt_lambdarank_rank", "N/A")
             print(f"\n{user.get('label', 'User')} ({uid[:12]})")
-            print(f"  GT rank -- V2: {v2_rank}  V3: {v3_rank}", end="  ")
-            if isinstance(v3_rank, int) and isinstance(v2_rank, int):
-                if v3_rank < v2_rank:
-                    print(f"[V3 BETTER by {v2_rank - v3_rank}]")
-                elif v3_rank > v2_rank:
-                    print(f"[V2 was better by {v3_rank - v2_rank}]")
+            print(f"  GT rank -- V1: {v1_rank}  V2: {v2_rank}", end="  ")
+            if isinstance(v2_rank, int) and isinstance(v1_rank, int):
+                if v2_rank < v1_rank:
+                    print(f"[V2 BETTER by {v1_rank - v2_rank}]")
+                elif v2_rank > v1_rank:
+                    print(f"[V1 was better by {v2_rank - v1_rank}]")
                 else:
                     print("[SAME]")
             else:
                 print()
-            v2_top3 = [
+            v1_top3 = [
                 r.get("title", "?")[:25]
-                for r in v2u.get("lambdarank_top5", [])[:3]
+                for r in v1u.get("lambdarank_top5", [])[:3]
             ]
-            v3_top3 = [
+            v2_top3 = [
                 r.get("title", "?")[:25]
                 for r in user.get("lambdarank_top5", [])[:3]
             ]
+            print(f"  V1 top-3: {v1_top3}")
             print(f"  V2 top-3: {v2_top3}")
-            print(f"  V3 top-3: {v3_top3}")
         print("=" * 70)
 
     _update_progress()

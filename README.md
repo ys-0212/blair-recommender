@@ -113,21 +113,23 @@ python -m src.stage10_qualitative.main
 
 ## Results
 
-### Version 2 — Pretrained BLAIR (hyp1231/blair-roberta-large)
+### Version 1 — Pretrained BLAIR (hyp1231/blair-roberta-large)
 
 | System | NDCG@1 | NDCG@5 | NDCG@10 | MRR | HR@10 |
 |--------|--------|--------|---------|-----|-------|
 | Random | 0.0052 | 0.0150 | 0.0229 | 0.0297 | 0.0500 |
 | FAISS+HNSW | 0.0004 | 0.0013 | 0.0018 | 0.0066 | 0.0038 |
-| **LambdaRank (V2)** | **0.9709** | **0.9729** | **0.9740** | **0.9733** | **0.9783** |
+| **LambdaRank V1 (pretrained BLAIR)** | **0.9709** | **0.9729** | **0.9740** | **0.9733** | **0.9783** |
 
-### Version 3 — Custom BLAIR (blair-videogames-multiaspect)
+### Version 2 — Custom BLAIR (blair-videogames-multiaspect)
 
 | System | NDCG@1 | NDCG@5 | NDCG@10 | MRR | HR@10 |
 |--------|--------|--------|---------|-----|-------|
-| **LambdaRank (V3)** | pending | pending | pending | pending | pending |
+| Random | 0.0052 | 0.0150 | 0.0229 | 0.0297 | 0.0500 |
+| FAISS+HNSW | 0.0004 | 0.0013 | 0.0018 | 0.0066 | 0.0038 |
+| **LambdaRank V2 (custom BLAIR)** | **0.9154** | **0.9234** | **0.9270** | **0.9242** | **0.9426** |
 
-### Ablation (V2)
+### Ablation Study (V1 — Pretrained BLAIR)
 
 | Configuration | NDCG@10 | Drop |
 |--------------|---------|------|
@@ -140,7 +142,7 @@ python -m src.stage10_qualitative.main
 Change in `configs/config.yaml`:
 ```yaml
 pipeline:
-  active_version: "v3"  # or "v2"
+  active_version: "v2"  # or "v1"
 ```
 
 ---
@@ -165,7 +167,7 @@ pipeline:
 
 - **No online learning.** User profiles are static; a production system would update profiles incrementally.
 - **Rule-based aspect detection.** Replacing keyword matching with a fine-tuned aspect extractor would improve signal quality.
-- **Domain gap.** BLAIR V2 uses pretrained weights from all Amazon categories; V3 (custom domain fine-tuned) addresses this and shows broader feature contribution across the 30 LambdaRank features.
+- **Domain gap.** BLAIR V1 uses pretrained weights from all Amazon categories; V2 (custom domain-specific BLAIR) addresses this and shows broader feature contribution across the 30 LambdaRank features.
 
 ---
 

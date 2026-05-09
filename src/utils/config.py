@@ -44,13 +44,13 @@ def get_path(cfg: dict[str, Any], key: str) -> Path:
 def get_embedding_dir(cfg: dict[str, Any]) -> Path:
     """Return the embedding directory for the active pipeline version.
 
-    Reads pipeline.active_version from cfg; defaults to 'v3'.
+    Reads pipeline.active_version from cfg; defaults to 'v2'.
     """
-    version = cfg.get("pipeline", {}).get("active_version", "v3")
-    if version == "v2":
-        rel = cfg["pipeline"]["v2_embedding_dir"]
+    version = cfg.get("pipeline", {}).get("active_version", "v2")
+    if version == "v1":
+        rel = cfg["pipeline"]["v1_embedding_dir"]
     else:
-        rel = cfg["pipeline"]["v3_embedding_dir"]
+        rel = cfg["pipeline"]["v2_embedding_dir"]
     root = Path(__file__).resolve().parents[2]
     return root / rel
 

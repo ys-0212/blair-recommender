@@ -376,7 +376,7 @@ def run() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
 
-    logger.info("Active version: %s", cfg.get("pipeline", {}).get("active_version", "v3"))
+    logger.info("Active version: %s", cfg.get("pipeline", {}).get("active_version", "v2"))
     logger.info("Embedding dir: %s", get_embedding_dir(cfg))
 
     proc    = get_path(cfg, "data_processed")
