@@ -280,6 +280,45 @@ def run() -> None:
     out_path.write_text(json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Saved test_results.json: %s", out_path)
 
+    v2_backup = PROJECT_ROOT / "blair-v2-backup" / "test_results.json"
+    if v2_backup.exists():
+        v2 = json.loads(v2_backup.read_text(encoding="utf-8"))
+        v3_lr = all_results.get("lambdarank", {})
+        v2_lr = v2.get("lambdarank", {})
+
+        print()
+        print("=" * 70)
+        print("V2 (Pretrained BLAIR) vs V3 (Custom BLAIR) COMPARISON")
+        print("=" * 70)
+        print(f"{'Metric':<20} {'V2':>12} {'V3':>12} {'Change':>12}")
+        print("-" * 70)
+        for metric in ["ndcg@1", "ndcg@5", "ndcg@10", "mrr", "hr@10"]:
+            v2_val = v2_lr.get(metric, 0)
+            v3_val = v3_lr.get(metric, 0)
+            if v2_val > 0:
+                change = (v3_val - v2_val) / v2_val * 100
+                arrow = "^" if change >= 0 else "v"
+                print(f"{metric:<20} {v2_val:>12.4f} {v3_val:>12.4f} {arrow}{abs(change):>10.2f}%")
+        print("=" * 70)
+
+        comparison = {
+            "v2_model": "hyp1231/blair-roberta-large",
+            "v3_model": "blair-videogames-multiaspect",
+            "v2": v2_lr,
+            "v3": v3_lr,
+            "improvement_pct": {
+                m: round(
+                    (v3_lr.get(m, 0) - v2_lr.get(m, 0))
+                    / max(v2_lr.get(m, 1e-9), 1e-9) * 100,
+                    4,
+                )
+                for m in ["ndcg@1", "ndcg@5", "ndcg@10", "mrr", "hr@10"]
+            },
+        }
+        comp_path = results_dir / "v2_v3_comparison.json"
+        comp_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+        logger.info("Saved V2 vs V3 comparison: %s", comp_path)
+
     chart_path = charts_dir / "system_comparison.png"
     _plot_comparison(all_results, k_values, chart_path)
 

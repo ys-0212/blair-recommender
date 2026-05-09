@@ -3,6 +3,25 @@ project:
   seed: 42
 
 # ---------------------------------------------------------------------------
+# Pipeline Version  (v2 = pretrained BLAIR, v3 = custom domain BLAIR)
+# ---------------------------------------------------------------------------
+pipeline:
+  active_version: "v3"
+  v2_embedding_dir: "data/embeddings/using_inference"
+  v3_embedding_dir: "data/embeddings/using_scratch_model"
+
+# ---------------------------------------------------------------------------
+# Embedding filenames  (resolved against active version dir by get_embedding_path)
+# ---------------------------------------------------------------------------
+embeddings:
+  item_embeddings:      "item_embeddings.npy"
+  item_ids:             "item_ids.npy"
+  user_voice_embeddings: "user_voice_embeddings.npy"
+  user_voice_ids:       "user_voice_ids.npy"
+  faiss_index:          "faiss_index.bin"
+  faiss_id_map:         "faiss_id_map.json"
+
+# ---------------------------------------------------------------------------
 # Paths  (all relative to project root; resolved via src/utils/config.py)
 # ---------------------------------------------------------------------------
 paths:
@@ -284,8 +303,8 @@ stage2:
 # Stage 3 — BLAIR Embeddings  (runs in Colab)
 # ---------------------------------------------------------------------------
 stage3:
-  model_name: hyp1231/blair-roberta-large   # full BLAIR model (GPU, Colab)
-  batch_size: 32                             # safe for T4 + RoBERTa-large
+  model_name: "D:/MLSP_Project/blair-recommender/models/blair-videogames-multiaspect"
+  batch_size: 32                           
   max_seq_length: 512
   embedding_dim: 1024
   checkpoint_every: 5000                    # save partial results every N items
@@ -368,14 +387,15 @@ stage7:
   objective: lambdarank
   metric: ndcg
   ndcg_eval_at: [1, 5, 10]
-  n_estimators: 1000
+  train_sample_ratio: 0.20   # load 20% of train row groups to cap peak RAM (~2.8 GB vs 14 GB)
+  n_estimators: 2000
   learning_rate: 0.05
   max_depth: 7
   num_leaves: 63
   min_child_samples: 10
   subsample: 0.8
   colsample_bytree: 0.8
-  early_stopping_rounds: 50
+  early_stopping_rounds: 100
   lambdarank_truncation_level: 20
   n_jobs: -1
   model_path: outputs/results/lambdarank_model.lgb

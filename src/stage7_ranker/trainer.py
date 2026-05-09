@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random as _random
 import time
 from pathlib import Path
 from typing import Any
@@ -76,73 +77,88 @@ def load_split_chunked(
     label_col: str = "relevance_label",
     query_col: str = "query_parent_asin",
     user_col:  str = "user_id",
-    row_group_batch: int = 10,
+    sample_ratio: float = 1.0,
+    seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Chunked loader for large feature parquet; exploits write order to count groups."""
+    """Chunked parquet loader with optional row-group sampling to cap peak RAM.
+
+    sample_ratio=1.0 loads all row groups (default).
+    sample_ratio=0.20 loads ~20% of row groups, reducing peak RAM from ~14 GB
+    to ~2.8 GB for 125M-row training files. Row group order is preserved so
+    the carry-over group-count logic remains correct.
+    """
     t0 = time.time()
     pf = pq.ParquetFile(str(path))
-    n_rg = pf.metadata.num_row_groups
-    logger.info(
-        "Loading %s: %d row groups, %d rows total",
-        path.name, n_rg, pf.metadata.num_rows,
-    )
+    n_rg       = pf.metadata.num_row_groups
+    total_rows = pf.metadata.num_rows
 
-    # Columns we actually need from disk
+    # Decide which row groups to load, preserving order for carry-over logic
+    rng = _random.Random(seed)
+    if sample_ratio < 1.0:
+        selected_rgs = [rg for rg in range(n_rg) if rng.random() < sample_ratio]
+        if not selected_rgs:
+            selected_rgs = [0]  # always load at least one group
+        logger.info(
+            "Loading %s: sampling %.0f%% -> %d / %d row groups (~%.0fM / %.0fM rows)",
+            path.name, sample_ratio * 100, len(selected_rgs), n_rg,
+            total_rows * len(selected_rgs) / max(n_rg, 1) / 1e6, total_rows / 1e6,
+        )
+    else:
+        selected_rgs = list(range(n_rg))
+        logger.info(
+            "Loading %s: %d row groups, %d rows total",
+            path.name, n_rg, total_rows,
+        )
+
     read_cols = [user_col, query_col, label_col] + feature_cols
 
     X_parts: list[np.ndarray] = []
     y_parts: list[np.ndarray] = []
     group_counts: list[int]   = []
 
-    # Carry-over from previous chunk: last query key + partial count
+    # Carry-over: last query key + partial count across row group boundaries
     prev_key:   str | None = None
     prev_count: int        = 0
 
-    for rg_start in range(0, n_rg, row_group_batch):
-        rg_end   = min(rg_start + row_group_batch, n_rg)
-        table    = pf.read_row_groups(
-            list(range(rg_start, rg_end)), columns=read_cols
-        )
-        df = table.to_pandas()
+    for load_idx, rg_idx in enumerate(selected_rgs):
+        table = pf.read_row_group(rg_idx, columns=read_cols)
+        df    = table.to_pandas()
 
-        # Build query key column
         df["_qkey"] = df[user_col].astype(str) + "_" + df[query_col].astype(str)
 
-        # Extract feature matrix and labels
         X_parts.append(df[feature_cols].values.astype(np.float32))
         y_parts.append(df[label_col].values.astype(np.float32))
 
-        # Count consecutive group sizes
+        # Count consecutive query group sizes
         keys = df["_qkey"].values
-        i = 0
-        n = len(keys)
-        while i < n:
-            k = keys[i]
+        pos  = 0
+        n    = len(keys)
+        while pos < n:
+            k = keys[pos]
             if k == prev_key:
                 # Continue counting the carry-over group
-                j = i
+                j = pos
                 while j < n and keys[j] == k:
                     j += 1
-                prev_count += j - i
-                i = j
+                prev_count += j - pos
+                pos = j
             else:
-                # Flush previous group
+                # Flush completed group, start new one
                 if prev_key is not None:
                     group_counts.append(prev_count)
-                # Start new group
-                j = i
+                j = pos
                 while j < n and keys[j] == k:
                     j += 1
                 prev_key   = k
-                prev_count = j - i
-                i = j
+                prev_count = j - pos
+                pos = j
 
-        if (rg_start // row_group_batch) % 20 == 0:
+        if (load_idx + 1) % 20 == 0 or (load_idx + 1) == len(selected_rgs):
             logger.info(
-                "  loaded row groups %d-%d / %d", rg_start, rg_end - 1, n_rg
+                "  loaded %d / %d row groups", load_idx + 1, len(selected_rgs)
             )
 
-    # Flush last group
+    # Flush the last group
     if prev_key is not None:
         group_counts.append(prev_count)
 
@@ -167,16 +183,26 @@ def train_lambdarank(
     output_dir: Path,
 ) -> lgb.Booster:
     """Train LambdaRank on chunked train features and validate on valid features."""
-    cfg7        = cfg.get("stage7", {})
+    cfg7         = cfg.get("stage7", {})
     feature_cols = list(cfg7.get("feature_cols", []))
     if not feature_cols:
         raise ValueError("stage7.feature_cols is empty in config.yaml")
 
-    logger.info("Loading training data (chunked) ...")
-    X_train, y_train, g_train = load_split_chunked(train_path, feature_cols)
+    sample_ratio = float(cfg7.get("train_sample_ratio", 1.0))
+    seed         = int(cfg.get("project", {}).get("seed", 42))
+
+    logger.info(
+        "Loading training data (chunked, sample_ratio=%.0f%%) ...",
+        sample_ratio * 100,
+    )
+    X_train, y_train, g_train = load_split_chunked(
+        train_path, feature_cols, sample_ratio=sample_ratio, seed=seed
+    )
 
     logger.info("Loading validation data (full) ...")
-    X_valid, y_valid, g_valid = load_split_chunked(valid_path, feature_cols)
+    X_valid, y_valid, g_valid = load_split_chunked(
+        valid_path, feature_cols, sample_ratio=1.0, seed=seed
+    )
 
     logger.info("Building LightGBM datasets ...")
     train_ds = lgb.Dataset(

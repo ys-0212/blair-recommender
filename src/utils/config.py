@@ -35,18 +35,30 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
 
 
 def get_path(cfg: dict[str, Any], key: str) -> Path:
-    """Resolve a path key from cfg['paths'] relative to PROJECT_ROOT.
-
-    Args:
-        cfg:  Config dict returned by load_config().
-        key:  Key inside cfg['paths'], e.g. 'meta_clean'.
-
-    Returns:
-        Absolute pathlib.Path.
-    """
+    """Resolve cfg['paths'][key] to an absolute Path under PROJECT_ROOT."""
     raw = cfg["paths"][key]
     p = PROJECT_ROOT / raw
     return p
+
+
+def get_embedding_dir(cfg: dict[str, Any]) -> Path:
+    """Return the embedding directory for the active pipeline version.
+
+    Reads pipeline.active_version from cfg; defaults to 'v3'.
+    """
+    version = cfg.get("pipeline", {}).get("active_version", "v3")
+    if version == "v2":
+        rel = cfg["pipeline"]["v2_embedding_dir"]
+    else:
+        rel = cfg["pipeline"]["v3_embedding_dir"]
+    root = Path(__file__).resolve().parents[2]
+    return root / rel
+
+
+def get_embedding_path(cfg: dict[str, Any], key: str) -> Path:
+    """Resolve cfg['embeddings'][key] to an absolute Path in the active version dir."""
+    filename = cfg["embeddings"][key]
+    return get_embedding_dir(cfg) / filename
 
 
 def ensure_dirs(cfg: dict[str, Any]) -> None:

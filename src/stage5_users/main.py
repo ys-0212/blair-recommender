@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.utils.config import ensure_dirs, get_path, load_config
+from src.utils.config import ensure_dirs, get_embedding_dir, get_path, load_config
 from src.stage5_users.profile_builder import build_user_profiles
 from src.stage5_users.user_voice import build_user_voice_documents
 
@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 def run() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
+    logger.info("Active version: %s", cfg.get("pipeline", {}).get("active_version", "v3"))
+    logger.info("Embedding dir: %s", get_embedding_dir(cfg))
     proc = get_path(cfg, "data_processed")
 
     profiles_path   = proc / "user_profiles.parquet"

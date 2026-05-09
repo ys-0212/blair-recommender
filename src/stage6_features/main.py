@@ -14,7 +14,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.utils.config import PROJECT_ROOT, ensure_dirs, get_path, load_config
+from src.utils.config import PROJECT_ROOT, ensure_dirs, get_embedding_dir, get_embedding_path, get_path, load_config
 from src.stage4_faiss.retriever import Retriever
 from src.stage6_features.candidate_generator import generate_candidates_batch
 from src.stage6_features.feature_builder import (
@@ -40,9 +40,15 @@ FLUSH_EVERY = 10     # batches per parquet write
 
 def _load_item_lookup(cfg: dict) -> tuple[dict[str, np.ndarray], int]:
     """Return {parent_asin: L2-normalised embedding} and embedding dim."""
-    emb_dir = get_path(cfg, "data_embeddings")
-    emb = np.load(str(emb_dir / "item_embeddings.npy")).astype(np.float32)
-    ids = np.load(str(emb_dir / "item_ids.npy"), allow_pickle=True).tolist()
+    emb_path = get_embedding_path(cfg, "item_embeddings")
+    ids_path = get_embedding_path(cfg, "item_ids")
+    if not emb_path.exists():
+        raise FileNotFoundError(
+            f"Item embeddings not found: {emb_path}  "
+            "Run Stage 3 (Colab) and place outputs in the active embedding dir."
+        )
+    emb = np.load(str(emb_path)).astype(np.float32)
+    ids = np.load(str(ids_path), allow_pickle=True).tolist()
     lookup = {asin: emb[i] for i, asin in enumerate(ids)}
     dim = emb.shape[1]
     logger.info("Loaded item lookup: %d items, dim=%d", len(lookup), dim)
@@ -51,8 +57,8 @@ def _load_item_lookup(cfg: dict) -> tuple[dict[str, np.ndarray], int]:
 
 def _load_voice_dict(cfg: dict) -> dict[str, np.ndarray]:
     """Return {user_id: voice embedding}. Empty dict if files missing."""
-    emb_path = get_path(cfg, "user_voice_embeddings")
-    ids_path = get_path(cfg, "user_voice_ids")
+    emb_path = get_embedding_path(cfg, "user_voice_embeddings")
+    ids_path = get_embedding_path(cfg, "user_voice_ids")
     if not emb_path.exists() or not ids_path.exists():
         logger.warning(
             "User voice embeddings not found at %s — voice features will be zero.",
@@ -369,6 +375,9 @@ def _print_summary(summaries: list[dict], norm_stats: dict[str, dict[str, float]
 def run() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
+
+    logger.info("Active version: %s", cfg.get("pipeline", {}).get("active_version", "v3"))
+    logger.info("Embedding dir: %s", get_embedding_dir(cfg))
 
     proc    = get_path(cfg, "data_processed")
     results = get_path(cfg, "outputs_results")

@@ -15,11 +15,17 @@ __pycache__/
 
 # Claude Code memory
 .claude/
+CLAUDE.md
 
 # Outputs (charts/results can be committed selectively)
 outputs/results/
+
 # Downloads
 *.crdownload
 
-CLAUDE.md
-.claude/
+# Local utility / scratch scripts
+a.py
+
+# Backup directories and local model weights
+blair-v2-backup/
+models/

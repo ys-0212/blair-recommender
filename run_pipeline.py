@@ -67,7 +67,7 @@ def _make_stages(cfg: dict) -> list[dict]:
             "module":  "src.stage4_faiss.main",
             "check":   emb_dir / "faiss_index.bin",
             "colab":   False,
-            "desc":    "Build IVFFlat FAISS index, generate candidate sets",
+            "desc":    "Build HNSW FAISS index, 100% recall@200, generate candidate sets",
         },
         {
             "num":     5,
@@ -84,7 +84,7 @@ def _make_stages(cfg: dict) -> list[dict]:
             "module":  "src.stage6_features.main",
             "check":   proc / "features_train.parquet",
             "colab":   False,
-            "desc":    "Generate 27-feature vectors for all (user, candidate) pairs",
+            "desc":    "Generate 30-feature vectors for all (user, candidate) pairs",
         },
         {
             "num":     7,

@@ -245,36 +245,6 @@ Expected natural recall improvement: ~4% -> ~25-40%.
 
 ---
 
-
----
-
-## Stage 7 -- LambdaRank ✅ Complete
-
-**Completed:** 2026-04-22
-
-### What was done
-- Trained LightGBM LambdaRank on 26 features (f01-f26) from Stage 6 feature files
-- f27_is_forced_positive excluded from training (would leak label information)
-- Evaluated FAISS Baseline vs LambdaRank on validation set
-
-### Results (valid set)
-| System | NDCG@10 |
-|--------|---------|
-| FAISS Baseline | 0.0019 |
-| LambdaRank (Ours) | 0.9716 |
-
-### Honest FAISS Recall Limitation
-FAISS natural recall is approximately 4% at nlist=128, nprobe=16.
-Approximately 95.9% of positive labels in training data are force-injected
-(ground truth not retrieved by FAISS, added with faiss_score=0.0, faiss_rank=101).
-
-LambdaRank still learns valid re-ranking signal:
-- Forced positives teach the model what a "good" item looks like for a user
-- The model learns feature patterns that correlate with user preferences
-
-**Future improvement:** Rebuild FAISS index with nlist=512, nprobe=64.
-Expected natural recall improvement: ~4% -> ~25-40%.
-
 ## Known Issues / Blockers
 
 | Issue | Impact | Resolution |
@@ -291,3 +261,43 @@ Expected natural recall improvement: ~4% -> ~25-40%.
 - OS: Windows 11
 - Install deps: `pip install -r requirements.txt`
 - Run any stage: `python -m src.stageN_name.main`
+
+---
+
+## Version Comparison
+
+| Version | Model | NDCG@10 | HR@10 | MRR | Status |
+|---------|-------|---------|-------|-----|--------|
+| V2 | hyp1231/blair-roberta-large | 0.9740 | 0.9783 | 0.9733 | Complete |
+| V3 | blair-videogames-multiaspect | pending | pending | pending | Running |
+
+## Embedding Structure
+
+```
+data/embeddings/
+├── using_inference/        V2 pretrained BLAIR
+│   ├── item_embeddings.npy
+│   ├── item_ids.npy
+│   ├── user_voice_embeddings.npy
+│   ├── user_voice_ids.npy
+│   ├── faiss_index.bin
+│   └── faiss_id_map.json
+└── using_scratch_model/    V3 custom BLAIR (ACTIVE)
+    ├── item_embeddings.npy
+    ├── item_ids.npy
+    ├── user_voice_embeddings.npy
+    └── user_voice_ids.npy
+```
+
+## V3 Stage Status
+
+| Stage | Status | Notes |
+|-------|--------|-------|
+| 3 | Complete | Custom BLAIR, Kaggle P100 |
+| 4 | Pending | HNSW rebuild needed |
+| 5 | Complete | Voice embeddings, Kaggle P100 |
+| 6 | Pending | 125M rows expected |
+| 7 | Pending | n_estimators=2000 |
+| 8 | Pending | V2 vs V3 comparison |
+| 9 | Pending | 10 ablation configs |
+| 10 | Pending | V2 vs V3 side by side |

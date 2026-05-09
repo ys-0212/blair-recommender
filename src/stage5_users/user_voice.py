@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src.utils.config import get_path, load_config
+from src.utils.config import get_embedding_dir, get_embedding_path, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -290,9 +290,6 @@ def encode_user_voices(
     if cfg is None:
         cfg = load_config()
 
-    if output_dir is None:
-        output_dir = get_path(cfg, "data_processed")
-
     model_name = cfg.get("stage3", {}).get("model_name", "hyp1231/blair-roberta-large")
     max_seq_len = int(cfg.get("stage3", {}).get("max_seq_length", 512))
     batch_size  = 8   # CPU-safe for RoBERTa-large (768M params)
@@ -340,12 +337,13 @@ def encode_user_voices(
         np.linalg.norm(embeddings, axis=1).max(),
     )
 
-    # Save
-    emb_path = output_dir / "user_voice_embeddings.npy"
-    ids_path = output_dir / "user_voice_ids.npy"
+    # Save to active version embedding directory
+    emb_path = get_embedding_path(cfg, "user_voice_embeddings")
+    ids_path = get_embedding_path(cfg, "user_voice_ids")
+    emb_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(str(emb_path), embeddings)
     np.save(str(ids_path), np.array(user_ids, dtype=object))
-    logger.info("Saved user_voice_embeddings.npy (%d users, dim=%d)", len(user_ids), embeddings.shape[1])
-    logger.info("Saved user_voice_ids.npy")
+    logger.info("Saved %s (%d users, dim=%d)", emb_path.name, len(user_ids), embeddings.shape[1])
+    logger.info("Saved %s", ids_path.name)
 
     return embeddings, user_ids

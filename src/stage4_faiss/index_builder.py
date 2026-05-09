@@ -10,7 +10,7 @@ from pathlib import Path
 import faiss
 import numpy as np
 
-from src.utils.config import get_path, load_config
+from src.utils.config import get_embedding_dir, get_embedding_path, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +99,17 @@ def build_index(cfg: dict | None = None) -> tuple[faiss.Index, list[str]]:
     metric_name = cfg4.get("metric", "INNER_PRODUCT").upper()
     top_k       = int(cfg4.get("top_k_candidates", 200))
 
-    emb_dir  = get_path(cfg, "data_embeddings")
-    emb_path = emb_dir / "item_embeddings.npy"
-    ids_path = emb_dir / "item_ids.npy"
-    idx_path = emb_dir / "faiss_index.bin"
-    map_path = emb_dir / "faiss_id_map.json"
+    logger.info("embedding dir: %s", get_embedding_dir(cfg))
+    emb_path = get_embedding_path(cfg, "item_embeddings")
+    ids_path = get_embedding_path(cfg, "item_ids")
+    idx_path = get_embedding_path(cfg, "faiss_index")
+    map_path = get_embedding_path(cfg, "faiss_id_map")
+
+    if not emb_path.exists():
+        raise FileNotFoundError(
+            f"Item embeddings not found: {emb_path}  "
+            "Run Stage 3 (Colab) and place outputs in the active embedding dir."
+        )
 
     logger.info("Loading embeddings from %s", emb_path)
     t0 = time.time()
@@ -129,7 +135,7 @@ def build_index(cfg: dict | None = None) -> tuple[faiss.Index, list[str]]:
         nlist = int(cfg4.get("faiss_nlist", 512))
         index = _build_ivfflat(embeddings, nlist, metric_name)
 
-    emb_dir.mkdir(parents=True, exist_ok=True)
+    idx_path.parent.mkdir(parents=True, exist_ok=True)
     faiss.write_index(index, str(idx_path))
     logger.info("Saved FAISS index -> %s  (%.1f MB)",
                 idx_path.name, idx_path.stat().st_size / 1_048_576)
@@ -148,13 +154,17 @@ def load_index(cfg: dict | None = None) -> tuple[faiss.Index, list[str]]:
     if cfg is None:
         cfg = load_config()
 
-    emb_dir  = get_path(cfg, "data_embeddings")
-    idx_path = emb_dir / "faiss_index.bin"
-    map_path = emb_dir / "faiss_id_map.json"
+    idx_path = get_embedding_path(cfg, "faiss_index")
+    map_path = get_embedding_path(cfg, "faiss_id_map")
 
     if not idx_path.exists():
         raise FileNotFoundError(
-            f"FAISS index not found at {idx_path}. "
+            f"FAISS index not found: {idx_path}  "
+            "Run Stage 4 first: python -m src.stage4_faiss.main"
+        )
+    if not map_path.exists():
+        raise FileNotFoundError(
+            f"FAISS id map not found: {map_path}  "
             "Run Stage 4 first: python -m src.stage4_faiss.main"
         )
 

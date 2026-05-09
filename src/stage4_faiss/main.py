@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from src.utils.config import ensure_dirs, get_path, load_config
+from src.utils.config import ensure_dirs, get_embedding_dir, get_embedding_path, get_path, load_config
 from src.stage4_faiss.index_builder import build_index, load_index, measure_self_recall
 from src.stage4_faiss.retriever import Retriever
 
@@ -34,8 +33,10 @@ def run() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
 
-    emb_dir  = get_path(cfg, "data_embeddings")
-    idx_path = emb_dir / "faiss_index.bin"
+    logger.info("Active version: %s", cfg["pipeline"]["active_version"])
+    logger.info("Embedding dir: %s", get_embedding_dir(cfg))
+
+    idx_path = get_embedding_path(cfg, "faiss_index")
     cfg4     = cfg["stage4"]
     top_k    = int(cfg4.get("top_k_candidates", 200))
     seed     = int(cfg.get("project", {}).get("seed", 42))
@@ -44,12 +45,12 @@ def run() -> None:
         logger.info("FAISS index already exists — loading (delete to rebuild)")
         index, id_map = load_index(cfg)
         # Still run recall test on existing index
-        emb_path   = emb_dir / "item_embeddings.npy"
+        emb_path   = get_embedding_path(cfg, "item_embeddings")
         embeddings = np.load(emb_path).astype(np.float32)
         measure_self_recall(index, embeddings, id_map, top_k=top_k, seed=seed)
     else:
         index, id_map = build_index(cfg)
-        emb_path   = emb_dir / "item_embeddings.npy"
+        emb_path   = get_embedding_path(cfg, "item_embeddings")
         embeddings = np.load(emb_path).astype(np.float32)
 
     logger.info("smoke test: 5 random queries, top-10 each")

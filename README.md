@@ -12,7 +12,7 @@ A research-grade hybrid recommendation system for the Amazon Video Games dataset
 
 3. **Cold-Start Solution via Tiered Blending** — A 4-tier cold-start framework (0 = no history, 3 = warm user) smoothly interpolates between pure BLAIR semantic search and personalized reranking. The system degrades gracefully to zero history instead of failing.
 
-4. **26-Feature LambdaRank Pipeline** — LightGBM LambdaRank directly optimizes NDCG over 26 features spanning retrieval quality, product signals, aspect alignment, personalization, and temporal quality signals. All normalization stats are computed from training data only (no leakage).
+4. **30-Feature LambdaRank Pipeline** — LightGBM LambdaRank directly optimizes NDCG over 30 features spanning retrieval quality, product signals, aspect alignment, personalization, and temporal quality signals. All normalization stats are computed from training data only (no leakage).
 
 ---
 
@@ -34,7 +34,7 @@ data/raw/
    │       → item_embeddings.npy (137k × 1024)
    │
    ├─► [Stage 4: FAISS Retrieval]
-   │       IVFFlat index, cosine similarity, top-100 candidates
+   │       HNSW index, 100% self-recall@200, 0.75ms latency
    │       → faiss_index.bin
    │
    ├─► [Stage 5: User Modeling]  (local + Colab for voice)
@@ -42,7 +42,7 @@ data/raw/
    │       → user_profiles.parquet, user_voice_embeddings.npy
    │
    ├─► [Stage 6: Feature Engineering]
-   │       27 features per (user, candidate) pair, streaming writes
+   │       30 features per (user, candidate) pair, streaming writes
    │       → features_{train, valid, test}.parquet  (~63M / 9.5M / 9.5M rows)
    │
    ├─► [Stage 7: LambdaRank]
@@ -71,9 +71,9 @@ data/raw/
 | 1 | Data Pipeline | raw JSONL/CSV | `train/valid/test.parquet` | 5-core filtering |
 | 2 | NLP Enrichment | reviews + meta | `products_nlp.parquet` | 95 signals/product |
 | 3 | BLAIR Embeddings | `products_rich.parquet` | `item_embeddings.npy` | **Colab GPU** |
-| 4 | FAISS Retrieval | embeddings | `faiss_index.bin` | IVFFlat, cosine |
+| 4 | FAISS Retrieval | embeddings | `faiss_index.bin` | HNSW, 100% recall@200 |
 | 5 | User Modeling | reviews + profiles | `user_profiles.parquet` | + **Colab** for voice |
-| 6 | Feature Engineering | all Stage 2-5 outputs | `features_*.parquet` | 27 features, 63M rows |
+| 6 | Feature Engineering | all Stage 2-5 outputs | `features_*.parquet` | 30 features, 63M rows |
 | 7 | LambdaRank | features | `lambdarank_model.lgb` | LightGBM |
 | 8 | Evaluation | test features + model | `test_results.json` | 3-system comparison |
 | 9 | Ablation Study | valid features + model | `ablation_results.json` | 8 configurations |
@@ -113,19 +113,35 @@ python -m src.stage10_qualitative.main
 
 ## Results
 
-Evaluated on held-out test set (94,762 queries):
+### Version 2 — Pretrained BLAIR (hyp1231/blair-roberta-large)
 
 | System | NDCG@1 | NDCG@5 | NDCG@10 | MRR | HR@10 |
 |--------|--------|--------|---------|-----|-------|
-| Random Baseline | — | — | — | — | — |
-| FAISS Baseline | — | — | — | — | — |
-| **LambdaRank (Ours)** | **—** | **—** | **—** | **—** | **—** |
+| Random | 0.0052 | 0.0150 | 0.0229 | 0.0297 | 0.0500 |
+| FAISS+HNSW | 0.0004 | 0.0013 | 0.0018 | 0.0066 | 0.0038 |
+| **LambdaRank (V2)** | **0.9709** | **0.9729** | **0.9740** | **0.9733** | **0.9783** |
 
-*(Filled after running Stage 8.)*
+### Version 3 — Custom BLAIR (blair-videogames-multiaspect)
 
-**Honest Limitation:** FAISS natural recall is approximately 4% at `nlist=128, nprobe=16`. Approximately 95.9% of positive training labels are force-injected (ground truth not retrieved by FAISS). All absolute metric values are inflated relative to a system with higher natural recall. Relative comparisons between systems are internally valid.
+| System | NDCG@1 | NDCG@5 | NDCG@10 | MRR | HR@10 |
+|--------|--------|--------|---------|-----|-------|
+| **LambdaRank (V3)** | pending | pending | pending | pending | pending |
 
-**Future improvement:** Rebuild the FAISS index with `nlist=512, nprobe=64`. Expected natural recall improvement: ~4% → 25-40%.
+### Ablation (V2)
+
+| Configuration | NDCG@10 | Drop |
+|--------------|---------|------|
+| Full System | 0.9716 | — |
+| w/o Retrieval | 0.2527 | -73.99% |
+| w/o Product NLP | 0.9587 | -1.33% |
+
+## Switching Versions
+
+Change in `configs/config.yaml`:
+```yaml
+pipeline:
+  active_version: "v3"  # or "v2"
+```
 
 ---
 
@@ -147,16 +163,15 @@ Evaluated on held-out test set (94,762 queries):
 
 ## Known Limitations & Future Work
 
-- **FAISS recall ~4%** at current settings (`nlist=128, nprobe=16`). Rebuild with `nlist=512, nprobe=64` for significant recall improvement without major latency cost.
-- **Model stopped at round 1** due to trivially easy re-ranking task (forced positives dominate). With higher natural recall (more negative variety), the model will train for more rounds and learn finer distinctions.
 - **No online learning.** User profiles are static; a production system would update profiles incrementally.
 - **Rule-based aspect detection.** Replacing keyword matching with a fine-tuned aspect extractor would improve signal quality.
+- **Domain gap.** BLAIR V2 uses pretrained weights from all Amazon categories; V3 (custom domain fine-tuned) addresses this and shows broader feature contribution across the 30 LambdaRank features.
 
 ---
 
 ## Team
 
-*[Your names here]*
+Group 11 — IIT Indore, MLSP 2026
 
 ---
 

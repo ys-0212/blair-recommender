@@ -8,7 +8,7 @@ from typing import Any
 import faiss
 import numpy as np
 
-from src.utils.config import load_config
+from src.utils.config import get_embedding_dir, get_embedding_path, load_config
 from src.stage4_faiss.index_builder import load_index
 
 logger = logging.getLogger(__name__)
