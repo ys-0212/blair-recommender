@@ -24,6 +24,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_FEATURE_DISPLAY_NAMES: dict[str, str] = {
+    "f01_faiss_score":                    "semantic similarity",
+    "f02_faiss_rank":                     "retrieval rank",
+    "f03_query_item_cosine":              "query match",
+    "f04_user_uniform_cosine":            "user history match",
+    "f05_avg_rating":                     "product rating",
+    "f06_rating_count_log":               "popularity",
+    "f07_review_count_log":               "review count",
+    "f08_mean_sentiment":                 "community sentiment",
+    "f09_price_normalized":               "price",
+    "f10_hidden_gem_score":               "hidden gem score",
+    "f11_controversy_index":              "controversy",
+    "f12_desc_richness":                  "description quality",
+    "f13_aspect_gameplay":                "gameplay score",
+    "f14_aspect_graphics":                "graphics score",
+    "f15_aspect_story":                   "story score",
+    "f16_aspect_controls":                "controls score",
+    "f17_aspect_value":                   "value score",
+    "f18_user_item_voice_cosine":         "user voice match",
+    "f19_category_match":                 "category match",
+    "f20_price_tier_match":               "price tier match",
+    "f21_user_avg_sentiment_gap":         "sentiment alignment",
+    "f22_top_aspect_match":               "aspect preference match",
+    "f23_interaction_count_log":          "interaction history",
+    "f24_sentiment_trajectory":           "sentiment trend",
+    "f25_verified_ratio":                 "verified purchase ratio",
+    "f26_helpfulness_weighted_sentiment": "review quality",
+    "f28_user_recency_cosine":            "recent history match",
+    "f29_user_rating_cosine":             "rating preference match",
+    "f30_user_combined_cosine":           "combined user match",
+}
+
 
 def _select_diverse_users(
     valid_df: pd.DataFrame,
@@ -102,7 +134,7 @@ def _load_features_for_users(
     return pd.concat(chunks, ignore_index=True)
 
 
-def _top_features(row: pd.Series, feature_cols: list[str], n: int = 3) -> list[str]:
+def _top_features(row: pd.Series, feature_cols: list[str], n: int = 2) -> list[str]:
     """Return names of the top-n highest-value features for a single candidate row."""
     vals = [(f, float(row.get(f, 0.0) or 0.0)) for f in feature_cols]
     vals.sort(key=lambda x: x[1], reverse=True)
@@ -199,6 +231,14 @@ def _build_user_report(
     faiss_top10_asins = set(user_rows.sort_values("f01_faiss_score", ascending=False).head(10)["candidate_parent_asin"].astype(str))
     lr_top10_asins    = set(user_rows.sort_values("lambdarank_score", ascending=False).head(10)["candidate_parent_asin"].astype(str))
 
+    # Find exact GT rank in full LambdaRank ordering
+    lr_all = user_rows.sort_values("lambdarank_score", ascending=False).reset_index(drop=True)
+    gt_lr_rank: int | None = None
+    for rank_idx, (_, row) in enumerate(lr_all.iterrows(), 1):
+        if str(row["candidate_parent_asin"]) == gt_asin:
+            gt_lr_rank = rank_idx
+            break
+
     return {
         "user_id":             user_id,
         "n_candidates":        len(user_rows),
@@ -213,6 +253,7 @@ def _build_user_report(
         "lambdarank_top5":     lr_recs,
         "gt_in_faiss_top10":   gt_asin in faiss_top10_asins,
         "gt_in_lr_top10":      gt_asin in lr_top10_asins,
+        "gt_lambdarank_rank":  gt_lr_rank,
     }
 
 
@@ -225,10 +266,9 @@ def _format_txt_report(reports: list[dict], user_labels: list[str]) -> str:
     ]
 
     for label, rep in zip(user_labels, reports):
-        uid = rep["user_id"]
         lines += [
             "-" * 70,
-            f"USER: {uid}  [{label}]",
+            f"USER: {label}",
             "-" * 70,
         ]
 
@@ -237,12 +277,13 @@ def _format_txt_report(reports: list[dict], user_labels: list[str]) -> str:
             continue
 
         # User profile summary
-        asp_str = rep.get("user_top_aspect", "—")
+        asp_str = str(rep.get("user_top_aspect", "") or "")
+        if asp_str.lower() in ("", "—", "nan", "none"):
+            asp_str = "balanced (insufficient aspect data)"
         asp_scores = rep.get("aspect_scores", {})
         asp_detail = "  ".join(f"{a}={v:.2f}" for a, v in asp_scores.items()) if asp_scores else "—"
-        cats_str = ", ".join(rep.get("top_categories", [])) or "—"
         lines += [
-            f"PROFILE: interactions={rep.get('interaction_count', 0)}  top_categories={cats_str}",
+            f"PROFILE: {rep.get('interaction_count', 0)} interactions",
             f"CARES MOST ABOUT: {asp_str}",
             f"  Aspect scores: {asp_detail}",
             "",
@@ -267,20 +308,31 @@ def _format_txt_report(reports: list[dict], user_labels: list[str]) -> str:
 
         lines += [
             f"  GT in FAISS top-10: {'YES' if rep['gt_in_faiss_top10'] else 'NO'}",
+            "  Note: FAISS returns semantically similar embeddings",
+            "  but fails to capture user preferences and context",
             "",
-            "LAMBDARANK TOP-5  (score | faiss_score | why):",
+            "LAMBDARANK TOP-5  (score | similarity | why):",
         ]
         for r in rep["lambdarank_top5"]:
             gt_flag = " <-- GROUND TRUTH" if r["is_gt"] else ""
-            why = ", ".join(r.get("why_top_features", []))
+            top_asp = str(r.get("top_aspect", "") or "")
+            if top_asp.lower() in ("", "—", "nan", "none", "insufficient data"):
+                top_asp = "value"
+            raw_why = r.get("why_top_features", [])
+            why = ", ".join(_FEATURE_DISPLAY_NAMES.get(f, f) for f in raw_why)
             lines.append(
-                f"  {r['rank']}. LR={r['score']:.4f} | FAISS={r['faiss_score']:.4f} | "
-                f"{r['title']}  (top={r['top_aspect']}, why: {why}){gt_flag}"
+                f"  {r['rank']}. Score: {r['score']:.2f} | Similarity: {r['faiss_score']:.2f} | "
+                f"{r['title']}  (top={top_asp}, why: {why}){gt_flag}"
             )
-        lines += [
-            f"  GT in LambdaRank top-10: {'YES' if rep['gt_in_lr_top10'] else 'NO'}",
-            "",
-        ]
+
+        gt_lr_rank = rep.get("gt_lambdarank_rank")
+        if gt_lr_rank == 1:
+            rank_msg = "  [GROUND TRUTH FOUND AT RANK 1]"
+        elif gt_lr_rank is not None and rep.get("gt_in_lr_top10"):
+            rank_msg = f"  [GROUND TRUTH FOUND AT RANK {gt_lr_rank}]"
+        else:
+            rank_msg = "  [GROUND TRUTH NOT IN TOP 10]"
+        lines += [rank_msg, ""]
 
     lines += ["=" * 70, "END OF REPORT", "=" * 70]
     return "\n".join(lines)

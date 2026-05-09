@@ -17,7 +17,7 @@ def _sep(char: str = '─', width: int = 70) -> str:
     return char * width
 
 
-def _print_slow(lines: list[str], delay: float = 0.10) -> None:
+def _print_slow(lines: list[str], delay: float = 0.05) -> None:
     for line in lines:
         print(line)
         time.sleep(delay)
@@ -28,13 +28,11 @@ def _print_slow(lines: list[str], delay: float = 0.10) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section_banner() -> None:
-    print(f"\n{CYAN}{BOLD}", end='')
-    print('╔══════════════════════════════════════════════════╗')
-    print('║     BLAIR Hybrid Recommender System              ║')
-    print('║     Group 11 — IIT Indore — MLSP 2026            ║')
-    print('║     Amazon Video Games 2023                      ║')
-    print('╚══════════════════════════════════════════════════╝')
-    print(RESET)
+    print(f"\n{CYAN}{BOLD}╔══════════════════════════════════════════════════╗")
+    print(f"║     BLAIR Hybrid Recommender System              ║")
+    print(f"║     Group 11 — IIT Indore — MLSP 2026            ║")
+    print(f"║     Amazon Video Games 2023                      ║")
+    print(f"╚══════════════════════════════════════════════════╝{RESET}")
 
     stats = [
         ('Products indexed',    '137,269'),
@@ -76,7 +74,7 @@ def section_pipeline() -> None:
         label   = f"{BOLD}{stage:<9}{RESET}  {name:<22}"
         note    = f"({detail})"
         print(f"  {tick} {label} {note}")
-        time.sleep(0.10)
+        time.sleep(0.05)
 
     print()
 
@@ -101,8 +99,7 @@ def section_results() -> None:
 
     for name, n1, n5, n10, mrr, hr, highlight in rows:
         colour = f"{GREEN}{BOLD}" if highlight else ''
-        tag    = f" {GREEN}{BOLD}←{RESET}" if highlight else ''
-        print(f"  {colour}{name:<38}{RESET}{tag}")
+        print(f"  {colour}{name:<38}{RESET}")
         nums = f"  {'':38} {n1:>7} {n5:>7} {n10:>8} {mrr:>7} {hr:>7}"
         print(f"{colour}{nums}{RESET}")
 
@@ -128,12 +125,12 @@ def section_ablation() -> None:
     print('  ' + _sep('─', 62))
 
     ablation_rows = [
-        ('Retrieval (f01-f04)',   '-73.99%', '-58.76%', 'Dominant in both',    False),
-        ('Product NLP (f05-f12)',  '-1.33%',  '-1.36%', 'Consistent',          False),
-        ('Aspect Features',        '-0.00%',  '-0.18%', 'V2 UNLOCKED',         True),
+        ('Retrieval Features',   '-73.99%', '-58.76%', 'Dominant in both',    False),
+        ('Product NLP',           '-1.33%',  '-1.36%', 'Consistent',          False),
+        ('Aspect Scores',          '-0.00%',  '-0.18%', 'V2 UNLOCKED',         True),
         ('Personalization',        '-0.01%',  '-0.34%', 'V2 UNLOCKED',         True),
-        ('User Voice Cosine',      '-0.01%',  '-0.39%', 'V2 UNLOCKED',         True),
-        ('ALL NLP Features',       '-0.01%',  '-0.52%', 'V2 UNLOCKED',         True),
+        ('User Voice',             '-0.01%',  '-0.39%', 'V2 UNLOCKED',         True),
+        ('All NLP Combined',       '-0.01%',  '-0.52%', 'V2 UNLOCKED',         True),
         ('User Embeddings',        '-0.03%',  '-0.11%', 'V2 UNLOCKED',         True),
     ]
 
@@ -214,7 +211,7 @@ def section_qualitative() -> None:
         print(f"  │ LambdaRank:   {u['lr']:<{W-26}} {rank_tag} │")
         print(f"  └{'─' * W}┘")
         print()
-        time.sleep(0.30)
+        time.sleep(0.10)
 
     print(f"  {BOLD}{GREEN}LambdaRank Hit Rate@10:  5/5 (100%){RESET}")
     print(f"  {BOLD}{GREEN}FAISS Hit Rate@10:       0/5 (0%){RESET}")
@@ -235,8 +232,8 @@ def section_finding() -> None:
         "    • Model converges in 5 rounds",
         "    • Only retrieval features matter",
         "    • NLP features contribute ~0%",
-        "    • Reason: generic embeddings → weak negative diversity",
-    ], delay=0.10)
+        "    • Reason: generic embeddings trained on all Amazon categories",
+    ], delay=0.05)
     print()
 
     print("  V2 — Custom BLAIR (Video Games domain only):")
@@ -246,8 +243,8 @@ def section_finding() -> None:
         "    • Aspect features: 18x more impactful",
         "    • User Voice: 39x more impactful",
         "    • ALL NLP: 52x more impactful",
-        "    • Reason: domain-specific embeddings → richer signal",
-    ], delay=0.10)
+        "    • Reason: trained exclusively on Video Games domain",
+    ], delay=0.05)
     print()
 
     print(f"  {BOLD}{CYAN}CONCLUSION: Domain-specific BLAIR embeddings unlock{RESET}")
@@ -257,36 +254,7 @@ def section_finding() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 7 — HNSW ENGINEERING ACHIEVEMENT
-# ─────────────────────────────────────────────────────────────────────────────
-
-def section_hnsw() -> None:
-    print(f"{YELLOW}{BOLD}── Retrieval Engineering: IVFFlat → HNSW ──{RESET}\n")
-
-    hdr = f"  {'Metric':<24} {'IVFFlat':>14} {'HNSW':>14} {'Improvement':>14}"
-    print(hdr)
-    print('  ' + _sep('─', 70))
-
-    hnsw_rows = [
-        ('Self-recall@200',     '~4%',           '100%',          '25x better'),
-        ('Query latency',       '14-16 ms',       '0.75 ms',       '20x faster'),
-        ('Forced positives',    '95.9%',          '21.6%',         '4.4x better'),
-        ('Model rounds',        '1',              '135',           '135x more'),
-        ('Index build time',    'N/A',            '68.7 seconds',  'fast!'),
-    ]
-
-    for metric, ivf, hnsw, impr in hnsw_rows:
-        print(f"  {metric:<24} {ivf:>14} {CYAN}{BOLD}{hnsw:>14}{RESET} {GREEN}{impr:>14}{RESET}")
-
-    print()
-    print(f"  {GREEN}Root cause identified: IVFFlat low recall caused cascade failure{RESET}")
-    print(f"  {GREEN}Fix: HNSW with M=32, efConstruction=200, efSearch=128{RESET}")
-    print(f"  {GREEN}Result: Natural recall improved from 4% to 78.4%{RESET}")
-    print()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 8 — FINAL SUMMARY
+# SECTION 7 — FINAL SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section_summary() -> None:
@@ -306,7 +274,7 @@ def section_summary() -> None:
         f"  {GREEN}{BOLD}✓{RESET} Qualitative: 5/5 users ranked correctly at position 1",
         f"  {GREEN}{BOLD}✓{RESET} GitHub: github.com/ys-0212/blair-recommender",
     ]
-    _print_slow(lines, delay=0.12)
+    _print_slow(lines, delay=0.05)
     print()
     print(f"  {GREEN}{BOLD}Thank you!{RESET}\n")
 
@@ -320,25 +288,22 @@ def main() -> None:
     t_start = time.time()
 
     section_banner()
-    time.sleep(0.50)
+    time.sleep(0.20)
 
     section_pipeline()
-    time.sleep(0.50)
+    time.sleep(0.20)
 
     section_results()
-    time.sleep(0.50)
+    time.sleep(0.20)
 
     section_ablation()
-    time.sleep(0.50)
+    time.sleep(0.20)
 
     section_qualitative()
-    time.sleep(0.50)
+    time.sleep(0.20)
 
     section_finding()
-    time.sleep(0.50)
-
-    section_hnsw()
-    time.sleep(0.50)
+    time.sleep(0.20)
 
     section_summary()
 
